@@ -1,0 +1,6 @@
+services:
+  - type: worker
+    name: telegram-bot
+    runtime: node
+    buildCommand: npm install
+    startCommand: node bot.js
