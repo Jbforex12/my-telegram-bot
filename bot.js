@@ -12,6 +12,8 @@ const mammoth = require("mammoth");
 const XLSX = require("xlsx");
 
 const BOT_NAME = "Pathway Prep Assistant";
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? String(process.env.ADMIN_CHAT_ID) : null;
+const USERS_FILE = path.join(__dirname, "users.json");
 const SUPPORT_EMAIL = "support@pathwayprep.com"; // Update to your real support email
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
@@ -31,6 +33,82 @@ const userLocations = {};
 
 // Stores each user's preferred language (defaults to English)
 const userLanguages = {};
+
+// ─── User management — load/save/register/ban ────────────────────────────────
+
+// Load user data from disk (persists across restarts)
+function loadUsers() {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
+    }
+  } catch (e) {
+    console.error("Failed to load users file:", e.message);
+  }
+  return { users: {}, banned: {} };
+}
+
+// Save user data to disk
+function saveUsers(data) {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save users file:", e.message);
+  }
+}
+
+// Register or update a user on every interaction
+function registerUser(msg) {
+  const data = loadUsers();
+  const id = String(msg.chat.id);
+  const now = new Date().toISOString();
+
+  if (!data.users[id]) {
+    data.users[id] = {
+      chatId: id,
+      firstName: msg.chat.first_name || "",
+      lastName: msg.chat.last_name || "",
+      username: msg.chat.username ? "@" + msg.chat.username : "none",
+      firstSeen: now,
+      lastSeen: now,
+      messageCount: 1
+    };
+  } else {
+    data.users[id].lastSeen = now;
+    data.users[id].messageCount = (data.users[id].messageCount || 0) + 1;
+    data.users[id].firstName = msg.chat.first_name || data.users[id].firstName;
+    data.users[id].lastName = msg.chat.last_name || data.users[id].lastName;
+    if (msg.chat.username) data.users[id].username = "@" + msg.chat.username;
+  }
+
+  saveUsers(data);
+}
+
+// Check if a user is banned
+function isUserBanned(chatId) {
+  const data = loadUsers();
+  return !!data.banned[String(chatId)];
+}
+
+// Ban a user
+function banUser(chatId, reason) {
+  const data = loadUsers();
+  const id = String(chatId);
+  data.banned[id] = { reason: reason || "No reason given", bannedAt: new Date().toISOString() };
+  saveUsers(data);
+}
+
+// Unban a user
+function unbanUser(chatId) {
+  const data = loadUsers();
+  delete data.banned[String(chatId)];
+  saveUsers(data);
+}
+
+// Check if a sender is the admin
+function isAdmin(chatId) {
+  return ADMIN_CHAT_ID && String(chatId) === ADMIN_CHAT_ID;
+}
 
 // Max characters of file content to send to AI (keeps tokens manageable)
 const MAX_FILE_CHARS = 6000;
@@ -303,6 +381,93 @@ function detectLanguageRequest(text) {
   return hasLanguageTrigger && hasLanguageName;
 }
 
+// ─── Admin: /users — list all users ─────────────────────────────────────────
+bot.onText(/\/users/, function (msg) {
+  if (!isAdmin(msg.chat.id)) return;
+  const data = loadUsers();
+  const userList = Object.values(data.users);
+  if (userList.length === 0) {
+    return bot.sendMessage(msg.chat.id, "No users have interacted with the bot yet.");
+  }
+  const lines = userList.map(function(u, i) {
+    const banned = data.banned[u.chatId] ? " [BANNED]" : "";
+    const name = [u.firstName, u.lastName].filter(Boolean).join(" ") || "Unknown";
+    return (i + 1) + ". " + name + " (" + u.username + ")" + banned + "\n   ID: " + u.chatId + " | Messages: " + u.messageCount + "\n   Last seen: " + new Date(u.lastSeen).toLocaleString();
+  });
+  const header = "Users (" + userList.length + " total, " + Object.keys(data.banned).length + " banned):\n\n";
+
+  // Split into chunks if too long for one message
+  let chunk = header;
+  for (let i = 0; i < lines.length; i++) {
+    if (chunk.length + lines[i].length > 3800) {
+      bot.sendMessage(msg.chat.id, chunk);
+      chunk = "";
+    }
+    chunk += lines[i] + "\n\n";
+  }
+  if (chunk.trim()) bot.sendMessage(msg.chat.id, chunk);
+});
+
+// ─── Admin: /ban <chatId> [reason] ───────────────────────────────────────────
+bot.onText(/\/ban (.+)/, function (msg, match) {
+  if (!isAdmin(msg.chat.id)) return;
+  const parts = match[1].trim().split(" ");
+  const targetId = parts[0];
+  const reason = parts.slice(1).join(" ") || "No reason given";
+  if (!targetId || isNaN(targetId)) {
+    return bot.sendMessage(msg.chat.id, "Usage: /ban <chatId> [reason]\nExample: /ban 123456789 spamming");
+  }
+  banUser(targetId, reason);
+  bot.sendMessage(msg.chat.id, "User " + targetId + " has been banned.\nReason: " + reason);
+  // Notify the banned user
+  bot.sendMessage(targetId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".").catch(function() {});
+});
+
+// ─── Admin: /unban <chatId> ───────────────────────────────────────────────────
+bot.onText(/\/unban (.+)/, function (msg, match) {
+  if (!isAdmin(msg.chat.id)) return;
+  const targetId = match[1].trim();
+  if (!targetId || isNaN(targetId)) {
+    return bot.sendMessage(msg.chat.id, "Usage: /unban <chatId>\nExample: /unban 123456789");
+  }
+  unbanUser(targetId);
+  bot.sendMessage(msg.chat.id, "User " + targetId + " has been unbanned and can use the bot again.");
+  bot.sendMessage(targetId, "Your access to this bot has been restored. Welcome back!").catch(function() {});
+});
+
+// ─── Admin: /userinfo <chatId> ────────────────────────────────────────────────
+bot.onText(/\/userinfo (.+)/, function (msg, match) {
+  if (!isAdmin(msg.chat.id)) return;
+  const targetId = match[1].trim();
+  const data = loadUsers();
+  const user = data.users[targetId];
+  if (!user) {
+    return bot.sendMessage(msg.chat.id, "No user found with ID: " + targetId);
+  }
+  const banned = data.banned[targetId];
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown";
+  var infoLines = [];
+  infoLines.push("User Info");
+  infoLines.push("");
+  infoLines.push("Name: " + name);
+  infoLines.push("Username: " + user.username);
+  infoLines.push("Chat ID: " + user.chatId);
+  infoLines.push("Messages sent: " + user.messageCount);
+  infoLines.push("First seen: " + new Date(user.firstSeen).toLocaleString());
+  infoLines.push("Last seen: " + new Date(user.lastSeen).toLocaleString());
+  if (banned) {
+    infoLines.push("");
+    infoLines.push("Status: BANNED");
+    infoLines.push("Ban reason: " + banned.reason);
+    infoLines.push("Banned at: " + new Date(banned.bannedAt).toLocaleString());
+  } else {
+    infoLines.push("");
+    infoLines.push("Status: Active");
+  }
+  var info = infoLines.join("\n");
+  bot.sendMessage(msg.chat.id, info);
+});
+
 // ─── /start command ───────────────────────────────────────────────────────────
 bot.onText(/\/start/, function (msg) {
   const chatId = msg.chat.id;
@@ -378,6 +543,11 @@ bot.on("document", async function (msg) {
 
   if (lastProcessedMessageId[chatId] === msg.message_id) return;
   lastProcessedMessageId[chatId] = msg.message_id;
+
+  registerUser(msg);
+  if (isUserBanned(chatId)) {
+    return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
+  }
 
   bot.sendChatAction(chatId, "typing");
 
@@ -516,6 +686,11 @@ bot.on("message", async function (msg) {
   if (lastProcessedMessageId[chatId] === msg.message_id) return;
   lastProcessedMessageId[chatId] = msg.message_id;
 
+  registerUser(msg);
+  if (isUserBanned(chatId)) {
+    return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
+  }
+
   // Detect location mention
   if (detectLocationFromText(userText)) {
     try {
@@ -605,6 +780,11 @@ bot.on("photo", async function (msg) {
 
   if (lastProcessedMessageId[chatId] === msg.message_id) return;
   lastProcessedMessageId[chatId] = msg.message_id;
+
+  registerUser(msg);
+  if (isUserBanned(chatId)) {
+    return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
+  }
 
   bot.sendChatAction(chatId, "typing");
 
