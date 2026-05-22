@@ -3,6 +3,8 @@ const Groq = require("groq-sdk");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const http = require("http");
+const crypto = require("crypto");
 require("dotenv").config();
 
 // File parsers
@@ -14,29 +16,91 @@ const XLSX = require("xlsx");
 const BOT_NAME = "Pathway Prep Assistant";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? String(process.env.ADMIN_CHAT_ID) : null;
 const USERS_FILE = path.join(__dirname, "users.json");
-const SUPPORT_EMAIL = "support@pathwayprep.com"; // Update to your real support email
+const CODES_FILE = path.join(__dirname, "codes.json");
+const SUPPORT_EMAIL = "support@pathwayprep.com";
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-secret-key";
+const ADMIN_API_PORT = process.env.ADMIN_API_PORT || 3001;
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // Stores conversation history per user
 const conversations = {};
-
-// Tracks whether the user has had their first message handled
 const firstMessage = {};
-
-// Tracks the last processed message ID per chat to avoid duplicate replies
 const lastProcessedMessageId = {};
-
-// Stores each user's location (country/city)
 const userLocations = {};
-
-// Stores each user's preferred language (defaults to English)
 const userLanguages = {};
 
-// ─── User management — load/save/register/ban ────────────────────────────────
+// Tracks users currently in the activation flow (waiting for their code)
+const pendingActivation = {};
 
-// Load user data from disk (persists across restarts)
+// ─── Activation code management ───────────────────────────────────────────────
+
+function loadCodes() {
+  try {
+    if (fs.existsSync(CODES_FILE)) {
+      return JSON.parse(fs.readFileSync(CODES_FILE, "utf8"));
+    }
+  } catch (e) {
+    console.error("Failed to load codes file:", e.message);
+  }
+  return { codes: {} };
+}
+
+function saveCodes(data) {
+  try {
+    fs.writeFileSync(CODES_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save codes file:", e.message);
+  }
+}
+
+function generateCode() {
+  return crypto.randomBytes(4).toString("hex").toUpperCase(); // e.g. A3F9C2B1
+}
+
+function createActivationCode(note = "") {
+  const data = loadCodes();
+  let code;
+  do {
+    code = generateCode();
+  } while (data.codes[code]);
+
+  data.codes[code] = {
+    code,
+    createdAt: new Date().toISOString(),
+    usedBy: null,
+    usedAt: null,
+    note: note || ""
+  };
+  saveCodes(data);
+  return code;
+}
+
+function isCodeValid(code) {
+  const data = loadCodes();
+  const entry = data.codes[code.toUpperCase()];
+  return entry && !entry.usedBy;
+}
+
+function activateCode(code, chatId, userInfo) {
+  const data = loadCodes();
+  const entry = data.codes[code.toUpperCase()];
+  if (!entry || entry.usedBy) return false;
+  entry.usedBy = String(chatId);
+  entry.usedAt = new Date().toISOString();
+  entry.userInfo = userInfo || {};
+  saveCodes(data);
+  return true;
+}
+
+function isUserActivated(chatId) {
+  const data = loadCodes();
+  return Object.values(data.codes).some(c => c.usedBy === String(chatId));
+}
+
+// ─── User management ──────────────────────────────────────────────────────────
+
 function loadUsers() {
   try {
     if (fs.existsSync(USERS_FILE)) {
@@ -48,7 +112,6 @@ function loadUsers() {
   return { users: {}, banned: {} };
 }
 
-// Save user data to disk
 function saveUsers(data) {
   try {
     fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), "utf8");
@@ -57,7 +120,6 @@ function saveUsers(data) {
   }
 }
 
-// Register or update a user on every interaction
 function registerUser(msg) {
   const data = loadUsers();
   const id = String(msg.chat.id);
@@ -84,13 +146,11 @@ function registerUser(msg) {
   saveUsers(data);
 }
 
-// Check if a user is banned
 function isUserBanned(chatId) {
   const data = loadUsers();
   return !!data.banned[String(chatId)];
 }
 
-// Ban a user
 function banUser(chatId, reason) {
   const data = loadUsers();
   const id = String(chatId);
@@ -98,19 +158,16 @@ function banUser(chatId, reason) {
   saveUsers(data);
 }
 
-// Unban a user
 function unbanUser(chatId) {
   const data = loadUsers();
   delete data.banned[String(chatId)];
   saveUsers(data);
 }
 
-// Check if a sender is the admin
 function isAdmin(chatId) {
   return ADMIN_CHAT_ID && String(chatId) === ADMIN_CHAT_ID;
 }
 
-// Max characters of file content to send to AI (keeps tokens manageable)
 const MAX_FILE_CHARS = 6000;
 
 // ─── System prompt builder ────────────────────────────────────────────────────
@@ -239,11 +296,11 @@ async function renderPDFPagesToImages(filePath) {
   const canvasFactory = new NodeCanvasFactory();
   const pdf = await pdfjsLib.getDocument({ data, canvasFactory }).promise;
   const images = [];
-  const maxPages = Math.min(pdf.numPages, 4); // cap at 4 pages to stay within token limits
+  const maxPages = Math.min(pdf.numPages, 4);
 
   for (let i = 1; i <= maxPages; i++) {
     const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 2.0 }); // scale 2x for better readability
+    const viewport = page.getViewport({ scale: 2.0 });
     const canvasAndContext = canvasFactory.create(viewport.width, viewport.height);
 
     await page.render({
@@ -264,7 +321,6 @@ async function renderPDFPagesToImages(filePath) {
 async function extractTextFromFile(filePath, mimeType, fileName) {
   const ext = path.extname(fileName).toLowerCase();
 
-  // PDF — using pdfjs-dist which handles presentation and design PDFs properly
   if (ext === ".pdf" || mimeType === "application/pdf") {
     try {
       const data = new Uint8Array(fs.readFileSync(filePath));
@@ -275,21 +331,14 @@ async function extractTextFromFile(filePath, mimeType, fileName) {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map(item => item.str)
-          .join(" ");
+        const pageText = textContent.items.map(item => item.str).join(" ");
         if (pageText.trim()) {
           fullText += `[Page ${i}]\n${pageText.trim()}\n\n`;
         }
       }
 
       const text = fullText.trim();
-
-      if (!text) {
-        // PDF has no extractable text — likely fully image-based/scanned
-        return { text: null, type: "PDF", scanned: true };
-      }
-
+      if (!text) return { text: null, type: "PDF", scanned: true };
       return { text, type: "PDF" };
     } catch (err) {
       console.error("PDF parse error:", err.message);
@@ -297,7 +346,6 @@ async function extractTextFromFile(filePath, mimeType, fileName) {
     }
   }
 
-  // Word document
   if (ext === ".docx" || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     try {
       const result = await mammoth.extractRawText({ path: filePath });
@@ -308,7 +356,6 @@ async function extractTextFromFile(filePath, mimeType, fileName) {
     }
   }
 
-  // Excel spreadsheet
   if (ext === ".xlsx" || ext === ".xls" || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
     try {
       const workbook = XLSX.readFile(filePath);
@@ -325,30 +372,25 @@ async function extractTextFromFile(filePath, mimeType, fileName) {
     }
   }
 
-  // CSV
   if (ext === ".csv" || mimeType === "text/csv") {
     try {
       const text = fs.readFileSync(filePath, "utf8");
       return { text: text.trim(), type: "CSV file" };
     } catch (err) {
-      console.error("CSV parse error:", err.message);
       return { text: null, type: "CSV file", error: err.message };
     }
   }
 
-  // Plain text, markdown, and code files
   const textExtensions = [".txt", ".md", ".js", ".py", ".json", ".html", ".css", ".ts", ".jsx", ".tsx", ".xml", ".yaml", ".yml", ".env"];
   if (textExtensions.includes(ext) || mimeType === "text/plain") {
     try {
       const text = fs.readFileSync(filePath, "utf8");
       return { text: text.trim(), type: "text file" };
     } catch (err) {
-      console.error("Text file parse error:", err.message);
       return { text: null, type: "text file", error: err.message };
     }
   }
 
-  // Unsupported file type
   return null;
 }
 
@@ -359,7 +401,7 @@ function detectLocationFromText(text) {
   return triggers.some(trigger => lower.includes(trigger));
 }
 
-// ─── Detect language change request from text ───────────────────────────────────
+// ─── Detect language change request ──────────────────────────────────────────
 function detectLanguageRequest(text) {
   const lower = text.toLowerCase();
   const triggers = [
@@ -376,10 +418,54 @@ function detectLanguageRequest(text) {
     "italian", "russian", "hindi", "swahili", "english",
     "français", "español", "deutsch", "português", "italiano"
   ];
-  const hasLanguageTrigger = triggers.some(t => lower.includes(t));
-  const hasLanguageName = languageWords.some(l => lower.includes(l));
-  return hasLanguageTrigger && hasLanguageName;
+  return triggers.some(t => lower.includes(t)) && languageWords.some(l => lower.includes(l));
 }
+
+// ─── Admin: /gencode [note] — generate activation code ───────────────────────
+bot.onText(/\/gencode(.*)/, function (msg, match) {
+  if (!isAdmin(msg.chat.id)) return;
+  const note = (match[1] || "").trim();
+  const code = createActivationCode(note);
+  bot.sendMessage(
+    msg.chat.id,
+    `New activation code generated:\n\n<code>${code}</code>\n\n${note ? "Note: " + note + "\n\n" : ""}This code can be used by exactly one Telegram account.`,
+    { parse_mode: "HTML" }
+  );
+});
+
+// ─── Admin: /codes — list all codes ─────────────────────────────────────────
+bot.onText(/\/codes/, function (msg) {
+  if (!isAdmin(msg.chat.id)) return;
+  const data = loadCodes();
+  const allCodes = Object.values(data.codes);
+  if (allCodes.length === 0) {
+    return bot.sendMessage(msg.chat.id, "No activation codes have been generated yet.\n\nUse /gencode to create one.");
+  }
+
+  const unused = allCodes.filter(c => !c.usedBy);
+  const used = allCodes.filter(c => c.usedBy);
+
+  let msg_text = `Activation Codes (${allCodes.length} total)\n`;
+  msg_text += `Unused: ${unused.length} | Used: ${used.length}\n\n`;
+
+  if (unused.length > 0) {
+    msg_text += "UNUSED CODES:\n";
+    unused.forEach(c => {
+      msg_text += `• ${c.code}${c.note ? " — " + c.note : ""}\n  Created: ${new Date(c.createdAt).toLocaleString()}\n\n`;
+    });
+  }
+
+  if (used.length > 0) {
+    msg_text += "USED CODES:\n";
+    used.forEach(c => {
+      const userData = loadUsers().users[c.usedBy];
+      const name = userData ? [userData.firstName, userData.lastName].filter(Boolean).join(" ") || "Unknown" : c.usedBy;
+      msg_text += `• ${c.code} — used by ${name} (${c.usedBy})\n  Used: ${new Date(c.usedAt).toLocaleString()}\n\n`;
+    });
+  }
+
+  bot.sendMessage(msg.chat.id, msg_text);
+});
 
 // ─── Admin: /users — list all users ─────────────────────────────────────────
 bot.onText(/\/users/, function (msg) {
@@ -391,12 +477,12 @@ bot.onText(/\/users/, function (msg) {
   }
   const lines = userList.map(function(u, i) {
     const banned = data.banned[u.chatId] ? " [BANNED]" : "";
+    const activated = isUserActivated(u.chatId) ? " ✓" : " [NOT ACTIVATED]";
     const name = [u.firstName, u.lastName].filter(Boolean).join(" ") || "Unknown";
-    return (i + 1) + ". " + name + " (" + u.username + ")" + banned + "\n   ID: " + u.chatId + " | Messages: " + u.messageCount + "\n   Last seen: " + new Date(u.lastSeen).toLocaleString();
+    return (i + 1) + ". " + name + " (" + u.username + ")" + banned + activated + "\n   ID: " + u.chatId + " | Messages: " + u.messageCount + "\n   Last seen: " + new Date(u.lastSeen).toLocaleString();
   });
   const header = "Users (" + userList.length + " total, " + Object.keys(data.banned).length + " banned):\n\n";
 
-  // Split into chunks if too long for one message
   let chunk = header;
   for (let i = 0; i < lines.length; i++) {
     if (chunk.length + lines[i].length > 3800) {
@@ -419,7 +505,6 @@ bot.onText(/\/ban (.+)/, function (msg, match) {
   }
   banUser(targetId, reason);
   bot.sendMessage(msg.chat.id, "User " + targetId + " has been banned.\nReason: " + reason);
-  // Notify the banned user
   bot.sendMessage(targetId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".").catch(function() {});
 });
 
@@ -446,6 +531,10 @@ bot.onText(/\/userinfo (.+)/, function (msg, match) {
   }
   const banned = data.banned[targetId];
   const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown";
+  const activated = isUserActivated(targetId);
+  const codesData = loadCodes();
+  const userCode = Object.values(codesData.codes).find(c => c.usedBy === targetId);
+
   var infoLines = [];
   infoLines.push("User Info");
   infoLines.push("");
@@ -455,17 +544,17 @@ bot.onText(/\/userinfo (.+)/, function (msg, match) {
   infoLines.push("Messages sent: " + user.messageCount);
   infoLines.push("First seen: " + new Date(user.firstSeen).toLocaleString());
   infoLines.push("Last seen: " + new Date(user.lastSeen).toLocaleString());
+  infoLines.push("");
+  infoLines.push("Activation: " + (activated ? "ACTIVATED (code: " + userCode.code + ")" : "NOT ACTIVATED"));
   if (banned) {
     infoLines.push("");
     infoLines.push("Status: BANNED");
     infoLines.push("Ban reason: " + banned.reason);
     infoLines.push("Banned at: " + new Date(banned.bannedAt).toLocaleString());
   } else {
-    infoLines.push("");
     infoLines.push("Status: Active");
   }
-  var info = infoLines.join("\n");
-  bot.sendMessage(msg.chat.id, info);
+  bot.sendMessage(msg.chat.id, infoLines.join("\n"));
 });
 
 // ─── /start command ───────────────────────────────────────────────────────────
@@ -474,15 +563,89 @@ bot.onText(/\/start/, function (msg) {
   conversations[chatId] = [];
   firstMessage[chatId] = true;
 
+  // Check if user is banned
+  if (isUserBanned(chatId)) {
+    return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
+  }
+
+  // Check if already activated
+  if (isUserActivated(chatId)) {
+    return bot.sendMessage(
+      chatId,
+      `Hello! I'm the ${BOT_NAME} 👋\n\nI'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\nYou can chat with me, ask questions, or even send me a file — like your CV, a document, or a spreadsheet — and I'll read it and help you from there.\n\nHow can I help you today?`
+    );
+  }
+
+  // New user — require activation
+  pendingActivation[chatId] = true;
   bot.sendMessage(
     chatId,
-    `Hello! I'm the ${BOT_NAME} 👋\n\nI'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\nYou can chat with me, ask questions, or even send me a file — like your CV, a document, or a spreadsheet — and I'll read it and help you from there.\n\nHow can I help you today?`
+    `Welcome to the ${BOT_NAME}! 👋\n\nTo access this service, you need an activation code.\n\nPlease type your activation code now to get started.`
   );
 });
+
+// ─── /activate command ────────────────────────────────────────────────────────
+bot.onText(/\/activate (.+)/, function (msg, match) {
+  const chatId = msg.chat.id;
+  const code = match[1].trim().toUpperCase();
+  handleActivationAttempt(chatId, msg, code);
+});
+
+// ─── Handle activation code submission ────────────────────────────────────────
+function handleActivationAttempt(chatId, msg, code) {
+  if (isUserBanned(chatId)) {
+    return bot.sendMessage(chatId, "Your access to this bot has been restricted. Contact " + SUPPORT_EMAIL + ".");
+  }
+
+  if (isUserActivated(chatId)) {
+    delete pendingActivation[chatId];
+    return bot.sendMessage(chatId, "Your account is already activated. How can I help you today?");
+  }
+
+  const data = loadCodes();
+  const entry = data.codes[code];
+
+  if (!entry) {
+    return bot.sendMessage(chatId, "That code isn't valid. Please check it and try again, or contact support at " + SUPPORT_EMAIL + ".");
+  }
+
+  if (entry.usedBy && entry.usedBy !== String(chatId)) {
+    return bot.sendMessage(chatId, "That code has already been used by another account. Each activation code works for one account only.\n\nContact " + SUPPORT_EMAIL + " if you need a new code.");
+  }
+
+  // Activate the user
+  const userInfo = {
+    firstName: msg.chat.first_name || "",
+    lastName: msg.chat.last_name || "",
+    username: msg.chat.username ? "@" + msg.chat.username : "none"
+  };
+
+  activateCode(code, chatId, userInfo);
+  registerUser(msg);
+  delete pendingActivation[chatId];
+
+  // Notify admin
+  if (ADMIN_CHAT_ID) {
+    const name = [userInfo.firstName, userInfo.lastName].filter(Boolean).join(" ") || "Unknown";
+    bot.sendMessage(
+      ADMIN_CHAT_ID,
+      `New user activated!\n\nName: ${name}\nUsername: ${userInfo.username}\nChat ID: ${chatId}\nCode used: ${code}`
+    ).catch(() => {});
+  }
+
+  conversations[chatId] = [];
+  firstMessage[chatId] = true;
+
+  bot.sendMessage(
+    chatId,
+    `Your code has been accepted — welcome to Pathway Prep! 🎉\n\nI'm the ${BOT_NAME}, and I'm here to help you build the skills and confidence you need to prepare for work and opportunities abroad.\n\nYou can chat with me, ask questions, or send files like your CV or documents.\n\nHow can I help you today?`
+  );
+}
 
 // ─── /forget command ──────────────────────────────────────────────────────────
 bot.onText(/\/forget/, function (msg) {
   const chatId = msg.chat.id;
+  if (!isUserActivated(chatId) && !isAdmin(chatId)) return;
   conversations[chatId] = [];
   firstMessage[chatId] = true;
   bot.sendMessage(chatId, "Done — I've cleared our conversation history.\n\nHow can I help you today?");
@@ -491,6 +654,7 @@ bot.onText(/\/forget/, function (msg) {
 // ─── /location command ────────────────────────────────────────────────────────
 bot.onText(/\/location/, function (msg) {
   const chatId = msg.chat.id;
+  if (!isUserActivated(chatId) && !isAdmin(chatId)) return;
   const current = userLocations[chatId];
   if (current) {
     bot.sendMessage(chatId, `Your current location is set to: ${current}\n\nYou can update it anytime by telling me where you are or sharing your location.`);
@@ -499,9 +663,10 @@ bot.onText(/\/location/, function (msg) {
   }
 });
 
-// ─── /lang command — show current language ───────────────────────────────────
+// ─── /lang command ────────────────────────────────────────────────────────────
 bot.onText(/\/lang/, function (msg) {
   const chatId = msg.chat.id;
+  if (!isUserActivated(chatId) && !isAdmin(chatId)) return;
   const current = userLanguages[chatId] || "English";
   bot.sendMessage(
     chatId,
@@ -512,6 +677,10 @@ bot.onText(/\/lang/, function (msg) {
 // ─── Handle shared GPS location ───────────────────────────────────────────────
 bot.on("location", async function (msg) {
   const chatId = msg.chat.id;
+
+  if (isUserBanned(chatId)) return;
+  if (!isUserActivated(chatId) && !isAdmin(chatId)) return;
+
   const { latitude, longitude } = msg.location;
 
   try {
@@ -549,6 +718,11 @@ bot.on("document", async function (msg) {
     return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
   }
 
+  if (!isUserActivated(chatId) && !isAdmin(chatId)) {
+    pendingActivation[chatId] = true;
+    return bot.sendMessage(chatId, "You need an activation code to use this service.\n\nPlease type your activation code to get started.");
+  }
+
   bot.sendChatAction(chatId, "typing");
 
   const doc = msg.document;
@@ -556,7 +730,6 @@ bot.on("document", async function (msg) {
   const mimeType = doc.mime_type || "";
   const caption = msg.caption || "";
 
-  // Reject files over 20MB
   if (doc.file_size && doc.file_size > 20 * 1024 * 1024) {
     return bot.sendMessage(chatId, "That file is a bit too large for me to read — could you try sending something under 20MB?");
   }
@@ -569,7 +742,6 @@ bot.on("document", async function (msg) {
     tmpPath = await downloadTelegramFile(doc.file_id);
     const extracted = await extractTextFromFile(tmpPath, mimeType, fileName);
 
-    // Completely unsupported file type
     if (!extracted) {
       return bot.sendMessage(
         chatId,
@@ -577,7 +749,6 @@ bot.on("document", async function (msg) {
       );
     }
 
-    // Scanned/image-based PDF — render pages and send to vision model
     if (extracted.scanned) {
       await bot.sendMessage(chatId, "This looks like a scanned document. Let me take a look at it visually...");
       bot.sendChatAction(chatId, "typing");
@@ -587,7 +758,6 @@ bot.on("document", async function (msg) {
         const prompt = buildSystemPrompt(userLocations[chatId] || null, userLanguages[chatId] || null);
         const userCaption = caption || "Please read this document carefully and tell me what it contains. Then ask how I can help.";
 
-        // Build content array with all page images
         const contentParts = images.map(b64 => ({
           type: "image_url",
           image_url: { url: "data:image/png;base64," + b64 }
@@ -621,16 +791,13 @@ bot.on("document", async function (msg) {
       }
     }
 
-    // Parsing failed with an error
     if (!extracted.text) {
-      console.error(`Failed to extract text from ${fileName}. Error: ${extracted.error || "unknown"}`);
       return bot.sendMessage(
         chatId,
         `I received your ${extracted.type} but had trouble reading the content inside it. This sometimes happens with protected or unusual file formats.\n\nCould you try saving it as a plain .txt or .docx file and sending that instead?`
       );
     }
 
-    // Trim if too long
     const fileContent = extracted.text.length > MAX_FILE_CHARS
       ? extracted.text.substring(0, MAX_FILE_CHARS) + "\n\n[File content trimmed to fit — only the first portion was read]"
       : extracted.text;
@@ -669,7 +836,6 @@ bot.on("document", async function (msg) {
     console.error("Document handler error:", err);
     await bot.sendMessage(chatId, "I had trouble reading that file — could you try again or send it in a different format?");
   } finally {
-    // Clean up temp file
     if (tmpPath && fs.existsSync(tmpPath)) {
       fs.unlinkSync(tmpPath);
     }
@@ -687,8 +853,27 @@ bot.on("message", async function (msg) {
   lastProcessedMessageId[chatId] = msg.message_id;
 
   registerUser(msg);
+
   if (isUserBanned(chatId)) {
     return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
+  }
+
+  // If user is in activation flow, treat any text as potential activation code
+  if (pendingActivation[chatId] || (!isUserActivated(chatId) && !isAdmin(chatId))) {
+    pendingActivation[chatId] = true;
+    const potentialCode = userText.trim().toUpperCase();
+    // Try it as an activation code
+    const data = loadCodes();
+    const entry = data.codes[potentialCode];
+
+    if (entry) {
+      return handleActivationAttempt(chatId, msg, potentialCode);
+    } else {
+      return bot.sendMessage(
+        chatId,
+        "To use this service, you need a valid activation code.\n\nPlease enter your code — it looks something like A3F9C2B1.\n\nIf you don't have one, contact " + SUPPORT_EMAIL + " to get access."
+      );
+    }
   }
 
   // Detect location mention
@@ -786,6 +971,11 @@ bot.on("photo", async function (msg) {
     return bot.sendMessage(chatId, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".");
   }
 
+  if (!isUserActivated(chatId) && !isAdmin(chatId)) {
+    pendingActivation[chatId] = true;
+    return bot.sendMessage(chatId, "You need an activation code to use this service.\n\nPlease type your activation code to get started.");
+  }
+
   bot.sendChatAction(chatId, "typing");
 
   try {
@@ -824,4 +1014,144 @@ bot.on("photo", async function (msg) {
   }
 });
 
-console.log("✅ Pathway Prep Bot is running!");
+// ─── Admin HTTP API Server ────────────────────────────────────────────────────
+// This powers the admin website. Protect with ADMIN_API_KEY in your .env
+
+function sendJSON(res, status, data) {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-API-Key"
+  });
+  res.end(body);
+}
+
+function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      try { resolve(JSON.parse(body || "{}")); }
+      catch (e) { resolve({}); }
+    });
+    req.on("error", reject);
+  });
+}
+
+const apiServer = http.createServer(async (req, res) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, X-API-Key"
+    });
+    return res.end();
+  }
+
+  // Check API key
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey !== ADMIN_API_KEY) {
+    return sendJSON(res, 401, { error: "Unauthorized" });
+  }
+
+  const url = new URL(req.url, `http://localhost:${ADMIN_API_PORT}`);
+  const pathname = url.pathname;
+
+  // GET /api/users
+  if (req.method === "GET" && pathname === "/api/users") {
+    const usersData = loadUsers();
+    const codesData = loadCodes();
+    const users = Object.values(usersData.users).map(u => {
+      const code = Object.values(codesData.codes).find(c => c.usedBy === u.chatId);
+      return {
+        ...u,
+        activated: !!code,
+        activationCode: code ? code.code : null,
+        banned: !!usersData.banned[u.chatId],
+        banReason: usersData.banned[u.chatId] ? usersData.banned[u.chatId].reason : null
+      };
+    });
+    return sendJSON(res, 200, { users });
+  }
+
+  // GET /api/codes
+  if (req.method === "GET" && pathname === "/api/codes") {
+    const data = loadCodes();
+    const usersData = loadUsers();
+    const codes = Object.values(data.codes).map(c => {
+      const user = c.usedBy ? usersData.users[c.usedBy] : null;
+      return {
+        ...c,
+        userName: user ? [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown" : null,
+        userUsername: user ? user.username : null
+      };
+    });
+    return sendJSON(res, 200, { codes });
+  }
+
+  // POST /api/codes/generate
+  if (req.method === "POST" && pathname === "/api/codes/generate") {
+    const body = await parseBody(req);
+    const count = Math.min(parseInt(body.count) || 1, 50);
+    const note = body.note || "";
+    const generated = [];
+    for (let i = 0; i < count; i++) {
+      generated.push(createActivationCode(note));
+    }
+    return sendJSON(res, 200, { codes: generated });
+  }
+
+  // DELETE /api/codes/:code
+  if (req.method === "DELETE" && pathname.startsWith("/api/codes/")) {
+    const code = pathname.split("/api/codes/")[1].toUpperCase();
+    const data = loadCodes();
+    if (!data.codes[code]) return sendJSON(res, 404, { error: "Code not found" });
+    if (data.codes[code].usedBy) return sendJSON(res, 400, { error: "Cannot delete a code that has already been used" });
+    delete data.codes[code];
+    saveCodes(data);
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // POST /api/users/:id/ban
+  if (req.method === "POST" && pathname.match(/^\/api\/users\/\d+\/ban$/)) {
+    const id = pathname.split("/")[3];
+    const body = await parseBody(req);
+    banUser(id, body.reason || "Blocked via admin panel");
+    // Notify user
+    bot.sendMessage(id, "Your access to this bot has been restricted. If you believe this is a mistake, contact " + SUPPORT_EMAIL + ".").catch(() => {});
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // POST /api/users/:id/unban
+  if (req.method === "POST" && pathname.match(/^\/api\/users\/\d+\/unban$/)) {
+    const id = pathname.split("/")[3];
+    unbanUser(id);
+    bot.sendMessage(id, "Your access to this bot has been restored. Welcome back!").catch(() => {});
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // GET /api/stats
+  if (req.method === "GET" && pathname === "/api/stats") {
+    const usersData = loadUsers();
+    const codesData = loadCodes();
+    const allCodes = Object.values(codesData.codes);
+    return sendJSON(res, 200, {
+      totalUsers: Object.keys(usersData.users).length,
+      bannedUsers: Object.keys(usersData.banned).length,
+      totalCodes: allCodes.length,
+      usedCodes: allCodes.filter(c => c.usedBy).length,
+      unusedCodes: allCodes.filter(c => !c.usedBy).length
+    });
+  }
+
+  return sendJSON(res, 404, { error: "Not found" });
+});
+
+apiServer.listen(ADMIN_API_PORT, () => {
+  console.log(`Admin API running on port ${ADMIN_API_PORT}`);
+});
+
+console.log("✅Bot is running...");
