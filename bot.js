@@ -19,7 +19,7 @@ const USERS_FILE = path.join(__dirname, "users.json");
 const CODES_FILE = path.join(__dirname, "codes.json");
 const SUPPORT_EMAIL = "support@pathwayprep.com";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-secret-key";
-const ADMIN_API_PORT = process.env.ADMIN_API_PORT || 3001;
+const ADMIN_API_PORT = process.env.PORT || process.env.ADMIN_API_PORT || 3001;
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -1154,4 +1154,4 @@ apiServer.listen(ADMIN_API_PORT, () => {
   console.log(`Admin API running on port ${ADMIN_API_PORT}`);
 });
 
-console.log("✅Bot is running...");
+console.log("Bot is running...");
