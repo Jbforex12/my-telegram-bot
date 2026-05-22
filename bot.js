@@ -21,7 +21,9 @@ const SUPPORT_EMAIL = "support@pathwayprep.com";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-secret-key";
 const ADMIN_API_PORT = process.env.PORT || process.env.ADMIN_API_PORT || 3001;
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+console.log("TOKEN starts with:", TOKEN.substring(0, 10), "| length:", TOKEN.length);
+const bot = new TelegramBot(TOKEN, { polling: true });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // Stores conversation history per user
