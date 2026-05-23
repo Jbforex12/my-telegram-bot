@@ -80,16 +80,22 @@ function loadJSON(file, def) {
   return JSON.parse(JSON.stringify(def));
 }
 
+function countRecords(file, data) {
+  if (file === CODES_FILE) return Object.keys((data.codes || {})).length;
+  if (file === USERS_FILE) return Object.keys((data.users || {})).length;
+  return 0;
+}
+
 function saveJSON(file, data, opts = {}) {
   ensureDataDir();
   try {
-    if (file === CODES_FILE && data.codes && !opts.allowEmpty) {
-      const count = Object.keys(data.codes).length;
+    if ((file === CODES_FILE || file === USERS_FILE) && !opts.allowEmpty) {
+      const count = countRecords(file, data);
       if (count === 0 && fs.existsSync(file)) {
         try {
           const existing = JSON.parse(fs.readFileSync(file, "utf8"));
-          if (existing.codes && Object.keys(existing.codes).length > 0) {
-            console.error("Refused to save empty codes.json over existing codes");
+          if (countRecords(file, existing) > 0) {
+            console.error(`Refused to save empty ${path.basename(file)} over existing records`);
             return;
           }
         } catch (e) { /* proceed if unreadable */ }
@@ -118,6 +124,102 @@ function loadCodes() {
   return data;
 }
 function saveCodes(d) { saveJSON(CODES_FILE, d); }
+
+function mergeCodes(into, from) {
+  if (!from?.codes) return into;
+  for (const [key, entry] of Object.entries(from.codes)) {
+    const normalized = key.toUpperCase();
+    const existing = into.codes[normalized];
+    if (!existing) {
+      into.codes[normalized] = entry;
+      continue;
+    }
+    if (entry.usedAt && !existing.usedAt) into.codes[normalized] = entry;
+  }
+  return into;
+}
+
+function mergeUsers(into, from) {
+  if (!from?.users) return into;
+  for (const [id, user] of Object.entries(from.users)) {
+    if (!into.users[id]) into.users[id] = user;
+  }
+  if (from.banned) {
+    into.banned = into.banned || {};
+    for (const [id, ban] of Object.entries(from.banned)) {
+      if (!into.banned[id]) into.banned[id] = ban;
+    }
+  }
+  return into;
+}
+
+function readJSONFile(file) {
+  try {
+    if (!fs.existsSync(file)) return null;
+    const raw = fs.readFileSync(file, "utf8").trim();
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`Could not read ${file}:`, e.message);
+    return null;
+  }
+}
+
+/** Move/merge data from old locations into DATA_DIR (fixes Render deploy wiping app folder). */
+function migrateLegacyData() {
+  ensureDataDir();
+  const legacyFiles = [
+    path.join(__dirname, "codes.json"),
+    path.join(__dirname, "users.json"),
+    path.join(__dirname, "data", "codes.json"),
+    path.join(__dirname, "data", "users.json")
+  ];
+
+  let codes = readJSONFile(CODES_FILE) || { codes: {} };
+  let users = readJSONFile(USERS_FILE) || { users: {}, banned: {} };
+  if (!codes.codes) codes.codes = {};
+  if (!users.users) users.users = {};
+  if (!users.banned) users.banned = {};
+
+  let merged = false;
+  for (const file of legacyFiles) {
+    if (path.resolve(file) === path.resolve(CODES_FILE) || path.resolve(file) === path.resolve(USERS_FILE)) continue;
+    const data = readJSONFile(file);
+    if (!data) continue;
+    if (file.includes("codes.json")) {
+      const before = Object.keys(codes.codes).length;
+      codes = mergeCodes(codes, data);
+      if (Object.keys(codes.codes).length > before) {
+        console.log(`Merged codes from ${file}`);
+        merged = true;
+      }
+    } else if (file.includes("users.json")) {
+      const before = Object.keys(users.users).length;
+      users = mergeUsers(users, data);
+      if (Object.keys(users.users).length > before) {
+        console.log(`Merged users from ${file}`);
+        merged = true;
+      }
+    }
+  }
+
+  if (merged) {
+    saveJSON(CODES_FILE, codes, { allowEmpty: true });
+    saveJSON(USERS_FILE, users, { allowEmpty: true });
+  }
+
+  const marker = path.join(DATA_DIR, ".storage-ready");
+  if (!fs.existsSync(marker)) {
+    fs.writeFileSync(marker, new Date().toISOString());
+    if (process.env.DATA_DIR && Object.keys(codes.codes).length === 0) {
+      console.warn(
+        "⚠️  Persistent storage is empty. On Render: open your service → Disks → confirm 'bot-data' is mounted at /var/data, then redeploy."
+      );
+    }
+  }
+}
+
+migrateLegacyData();
 
 // ─── Code helpers ──────────────────────────────────────────────────────────
 function generateCode() {
@@ -739,7 +841,34 @@ const server = http.createServer(async (req, res) => {
       bannedUsers: Object.keys(u.banned).length,
       totalCodes: all.length,
       usedCodes: all.filter(x => x.usedBy).length,
-      unusedCodes: all.filter(x => !x.usedBy).length
+      unusedCodes: all.filter(x => !x.usedBy).length,
+      dataDir: DATA_DIR
+    });
+  }
+
+  if (req.method === "GET" && p === "/api/backup") {
+    const u = loadUsers();
+    const c = loadCodes();
+    return sendJSON(res, 200, {
+      exportedAt: new Date().toISOString(),
+      dataDir: DATA_DIR,
+      codes: c,
+      users: u
+    });
+  }
+
+  if (req.method === "POST" && p === "/api/restore") {
+    const body = await parseBody(req);
+    let codes = loadCodes();
+    let users = loadUsers();
+    if (body.codes) codes = mergeCodes(codes, body.codes);
+    if (body.users) users = mergeUsers(users, body.users);
+    saveJSON(CODES_FILE, codes, { allowEmpty: true });
+    saveJSON(USERS_FILE, users, { allowEmpty: true });
+    return sendJSON(res, 200, {
+      success: true,
+      totalCodes: Object.keys(codes.codes).length,
+      totalUsers: Object.keys(users.users).length
     });
   }
 

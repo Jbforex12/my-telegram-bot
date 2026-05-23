@@ -670,8 +670,23 @@ input[type="number"] { -moz-appearance: textfield; }
             <div class="stat-value c-warning" id="s-unused">—</div>
           </div>
         </div>
-        <div style="text-align:right">
+        <div style="text-align:right;margin-bottom:16px">
           <button class="btn btn-ghost btn-sm" onclick="loadStats()">↻ Refresh</button>
+        </div>
+
+        <div class="panel">
+          <h3>Backup &amp; restore</h3>
+          <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;line-height:1.5">
+            Download a backup before each deploy. If counts reset after an update, restore your saved file here.
+          </p>
+          <div class="form-row" style="align-items:stretch">
+            <button class="btn btn-primary" type="button" onclick="downloadBackup()">Download backup</button>
+            <label class="btn btn-ghost" style="cursor:pointer;margin:0">
+              Restore from file
+              <input type="file" id="restore-file" accept=".json,application/json" hidden onchange="restoreBackup(this)" />
+            </label>
+          </div>
+          <p id="backup-status" style="color:var(--text-muted);font-size:12px;margin-top:12px"></p>
         </div>
       </div>
 
@@ -884,6 +899,48 @@ async function loadStats() {
   document.getElementById('s-total').textContent  = d.totalCodes;
   document.getElementById('s-used').textContent   = d.usedCodes;
   document.getElementById('s-unused').textContent = d.unusedCodes;
+}
+
+async function downloadBackup() {
+  const d = await api('/api/backup');
+  if (!d) return;
+  const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `pathway-prep-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  document.getElementById('backup-status').textContent =
+    `Saved ${d.codes?.codes ? Object.keys(d.codes.codes).length : 0} codes and ${d.users?.users ? Object.keys(d.users.users).length : 0} users.`;
+  toast('Backup downloaded', 'success');
+}
+
+async function restoreBackup(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!confirm('Restore will merge this backup into your live data. Continue?')) {
+    input.value = '';
+    return;
+  }
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const payload = { codes: data.codes, users: data.users };
+    const d = await api('/api/restore', { method: 'POST', body: JSON.stringify(payload) });
+    if (d?.success) {
+      document.getElementById('backup-status').textContent =
+        `Restored — now ${d.totalCodes} codes and ${d.totalUsers} users.`;
+      toast('Backup restored', 'success');
+      loadStats();
+      loadCodes();
+      loadUsers();
+    } else {
+      toast('Restore failed', 'error');
+    }
+  } catch {
+    toast('Invalid backup file', 'error');
+  }
+  input.value = '';
 }
 
 // ── Codes ────────────────────────────────────────────────
