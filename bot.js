@@ -937,6 +937,18 @@ server.listen(PORT, () => {
   console.log(`✅ Pathway Prep Bot is running!`);
   console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
   console.log(`📁 Data folder: ${DATA_DIR} (${codeCount} codes, ${userCount} users loaded)`);
+
+  // Keep Render's free-tier service awake by pinging /health every 10 minutes
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
+  if (RENDER_URL) {
+    setInterval(() => {
+      https.get(`${RENDER_URL}/health`, (res) => {
+        console.log(`Keepalive ping: ${res.statusCode}`);
+      }).on("error", (err) => {
+        console.error("Keepalive ping failed:", err.message);
+      });
+    }, 10 * 60 * 1000);
+  }
 }).on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(`\n❌ Port ${PORT} is already in use. Stop the other process or set a different PORT in .env\n`);
