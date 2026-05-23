@@ -296,15 +296,20 @@ function activationSuccessMessage() {
 // ─── Reply formatting ──────────────────────────────────────────────────────
 function formatReply(text) {
   if (!text) return text;
-  return text
+  let out = text
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/\*([^*\n]+)\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1")
     .replace(/_([^_\n]+)_/g, "$1")
-    .replace(/^\s*[-*•]\s+/gm, "• ")
-    .replace(/^\s*\d+\.\s+/gm, "• ")
+    // Normalise unordered list markers to • (but leave numbered lists alone)
+    .replace(/^\s*[-*]\s+/gm, "• ")
+    // Ensure a blank line before every list item that isn't already preceded by one
+    .replace(/([^\n])\n(•|\d+\.)/g, "$1\n\n$2")
+    // Ensure a blank line after a list block before the next paragraph
+    .replace(/(•[^\n]*|^\d+\.[^\n]*)\n([^•\n\d])/gm, "$1\n\n$2")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return out;
 }
 
 async function sendLongMessage(chatId, text) {
@@ -417,16 +422,30 @@ YOUR INTELLIGENCE AND TEACHING ABILITY:
 - If a topic is outside Pathway Prep's scope or you genuinely don't know, say: "That's a great question — the support team would be best placed to help you with that. You can reach them at ${SUPPORT_EMAIL}"
 
 REPLY STYLE — VERY IMPORTANT:
-- Write in a professional, polished tone with clear visual spacing
-- Use a blank line between every paragraph (double line break)
-- When listing points, use the bullet character • at the start of each line — never use asterisks, dashes, or markdown
-- Structure longer answers with a brief opening line, then spaced sections, then a clear closing if helpful
+- Write in a professional, polished tone with generous visual spacing — never let text feel cramped or compressed
+- Always put a blank line between every paragraph, and between every list item
+- For unordered lists, use the bullet character • at the start of each line
+- For ordered or step-by-step lists, use numbers: 1. 2. 3.
+- Never use asterisks (*), dashes (-), or any markdown symbols as list markers or for emphasis
+- Structure longer answers with a short opening line, then clearly spaced sections, then a warm close
 - Do NOT end every reply with a question. Only ask when you genuinely need more information
 - Never echo back what the user just said
 - Never use robotic or corporate phrases
 - Never expose technical language to the user
 - When a user says "okay", "thanks", "bye", or signals the conversation is ending — respond warmly and briefly, then stop
 - Always follow the user's lead if they change topic
+
+CLARIFYING vs ANSWERING — VERY IMPORTANT:
+- If your response both clarifies something (corrects a misunderstanding, defines a term, or reframes the question) AND answers it, always separate the two clearly
+- First, write the clarification under the label "To clarify:" followed by a blank line
+- Then write the answer under the label "To answer:" followed by a blank line
+- Do not blend clarification and answer into the same paragraph — the user must always be able to tell which part is which
+- Example structure:
+  To clarify:
+  [your clarification here]
+
+  To answer:
+  [your answer here]
 
 TUTORING MODE:
 - If a user wants to learn or study something, guide them through it like a patient, encouraging tutor
