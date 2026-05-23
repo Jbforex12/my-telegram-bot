@@ -8,7 +8,7 @@ require("dotenv").config();
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const BOT_NAME = "Pathway Prep Assistant";
-const SUPPORT_EMAIL = "support@pathwayprep.com";
+const SUPPORT_EMAIL = "pathway.prep.programme@gmail.com";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? String(process.env.ADMIN_CHAT_ID) : null;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-key";
 const PORT = process.env.PORT || 3001;

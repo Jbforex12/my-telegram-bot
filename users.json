@@ -1,0 +1,28 @@
+{
+  "users": {
+    "5354388172": {
+      "chatId": "5354388172",
+      "firstName": "JB ACADEMY LTD",
+      "lastName": "",
+      "username": "@JB_ACADEMY_LTD",
+      "firstSeen": "2026-05-20T04:21:27.496Z",
+      "lastSeen": "2026-05-20T04:28:50.290Z",
+      "messageCount": 5
+    },
+    "6510311439": {
+      "chatId": "6510311439",
+      "firstName": "PATHWAY PREP (need help?)",
+      "username": "Pathway_Prep",
+      "lastSeen": "2026-05-23T05:11:51.299Z",
+      "messageCount": 7
+    },
+    "8785204814": {
+      "chatId": "8785204814",
+      "firstName": "Jefferson",
+      "username": "Jephthebos",
+      "lastSeen": "2026-05-23T05:11:49.143Z",
+      "messageCount": 2
+    }
+  },
+  "banned": {}
+}
