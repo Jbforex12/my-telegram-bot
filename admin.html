@@ -435,6 +435,33 @@ input[type="number"] { -moz-appearance: textfield; }
 #toast.t-success { border-color: var(--success); color: var(--success); }
 #toast.t-error   { border-color: var(--danger);  color: var(--danger); }
 
+/* Modal */
+#modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+#modal-overlay.show { display: flex; }
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+.modal-box h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.modal-box p { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+.modal-box input { margin-bottom: 0; }
+.modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+.modal-actions .btn { flex: 1; min-height: 44px; }
+
 /* Spinner */
 .spinner {
   display: inline-block;
@@ -752,6 +779,18 @@ input[type="number"] { -moz-appearance: textfield; }
   </nav>
 </div>
 
+<div id="modal-overlay">
+  <div class="modal-box">
+    <h3 id="modal-title"></h3>
+    <p id="modal-body"></p>
+    <input type="text" id="modal-input" placeholder="Blocked by admin" />
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="modalCancel()">Cancel</button>
+      <button class="btn btn-danger" id="modal-confirm" onclick="modalConfirm()">Block user</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -800,6 +839,14 @@ async function init() {
 
   document.getElementById('inp-key').addEventListener('keydown', e => {
     if (e.key === 'Enter') doLogin();
+  });
+
+  document.getElementById('modal-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') modalConfirm();
+    if (e.key === 'Escape') modalCancel();
+  });
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-overlay')) modalCancel();
   });
 
   if (savedKey && (onServer || savedUrl)) {
@@ -1066,8 +1113,30 @@ async function loadUsers() {
   }).join('')}</div>`;
 }
 
+let _modalResolve = null;
+
+function showModal(title, body) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').textContent = body;
+  document.getElementById('modal-input').value = '';
+  document.getElementById('modal-overlay').classList.add('show');
+  document.getElementById('modal-input').focus();
+  return new Promise(resolve => { _modalResolve = resolve; });
+}
+
+function modalConfirm() {
+  const val = document.getElementById('modal-input').value.trim() || 'Blocked by admin';
+  document.getElementById('modal-overlay').classList.remove('show');
+  if (_modalResolve) { _modalResolve(val); _modalResolve = null; }
+}
+
+function modalCancel() {
+  document.getElementById('modal-overlay').classList.remove('show');
+  if (_modalResolve) { _modalResolve(null); _modalResolve = null; }
+}
+
 async function banUser(id, name) {
-  const reason = prompt(`Reason for blocking ${name}?`, 'Blocked by admin');
+  const reason = await showModal(`Block ${name}?`, 'Enter a reason, or leave blank to use the default.');
   if (reason === null) return;
   const d = await api(`/api/users/${id}/ban`, { method: 'POST', body: JSON.stringify({ reason }) });
   if (d && d.success) { toast(`${name} has been blocked`, 'success'); loadUsers(); loadStats(); }
