@@ -3,7 +3,7 @@ const Groq = require("groq-sdk");
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
-const crypto = require("crypto");
+const https = require("https");
 require("dotenv").config();
 
 // ─── Config ────────────────────────────────────────────────────────────────
@@ -14,6 +14,33 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-key";
 const PORT = process.env.PORT || 3001;
 const USERS_FILE = path.join(__dirname, "users.json");
 const CODES_FILE = path.join(__dirname, "codes.json");
+const TEXT_MODEL = "llama-3.3-70b-versatile";
+const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const MAX_TOKENS = 2048;
+const MAX_HISTORY = 24;
+const MAX_DOC_CHARS = 14000;
+
+function requireEnv() {
+  const placeholders = [
+    "your_telegram_bot_token_here",
+    "your_groq_api_key_here",
+    "your_telegram_chat_id_here",
+    "change-this-to-a-strong-secret-key"
+  ];
+  const missing = [];
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!token || placeholders.includes(token)) missing.push("TELEGRAM_BOT_TOKEN");
+  if (!groqKey || placeholders.includes(groqKey)) missing.push("GROQ_API_KEY");
+  if (missing.length) {
+    console.error("\n❌ Bot cannot start — missing environment variables:\n");
+    missing.forEach((key) => console.error(`   • ${key}`));
+    console.error("\nEdit the .env file in the project folder and add your real API keys.");
+    console.error("(Copy from .env.example if .env does not exist yet.)\n");
+    process.exit(1);
+  }
+}
+requireEnv();
 
 // ─── Data helpers ──────────────────────────────────────────────────────────
 function loadJSON(file, def) {
@@ -67,13 +94,133 @@ function saveUser(chatId, info) {
   const data = loadUsers();
   const id = String(chatId);
   data.users[id] = {
-    ...( data.users[id] || {}),
+    ...(data.users[id] || {}),
     chatId: id,
     ...info,
     lastSeen: new Date().toISOString(),
     messageCount: ((data.users[id] || {}).messageCount || 0) + 1
   };
   saveUsers(data);
+}
+
+function looksLikeActivationCode(text) {
+  const t = text.trim();
+  return /^JB-/i.test(t) || /^[A-Z0-9]{2,}-[A-Z0-9]{4,}$/i.test(t);
+}
+
+function welcomeMessage() {
+  return (
+    `Welcome to ${BOT_NAME} 👋\n\n` +
+    `I'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\n` +
+    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, and reviewing documents or images you send me.\n\n` +
+    `To get started, please enter your activation code (for example: JB-XXXXXX).\n\n` +
+    `If you don't have one, contact ${SUPPORT_EMAIL} to get access.`
+  );
+}
+
+function activationSuccessMessage() {
+  return (
+    `You're in! Welcome to ${BOT_NAME} 🎉\n\n` +
+    `I'm your personal learning and career assistant for Pathway Prep.\n\n` +
+    `You can ask me questions, send images, or upload files like PDFs, Word documents, and spreadsheets — I'll read them and help based on our conversation.\n\n` +
+    `How can I help you today?`
+  );
+}
+
+// ─── Reply formatting ──────────────────────────────────────────────────────
+function formatReply(text) {
+  if (!text) return text;
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1")
+    .replace(/^\s*[-*•]\s+/gm, "• ")
+    .replace(/^\s*\d+\.\s+/gm, "• ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function sendLongMessage(chatId, text) {
+  const formatted = formatReply(text);
+  if (formatted.length <= 4000) {
+    await bot.sendMessage(chatId, formatted);
+    return;
+  }
+  const parts = [];
+  let remaining = formatted;
+  while (remaining.length > 0) {
+    if (remaining.length <= 4000) {
+      parts.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf("\n\n", 4000);
+    if (splitAt < 1500) splitAt = remaining.lastIndexOf("\n", 4000);
+    if (splitAt < 1500) splitAt = 4000;
+    parts.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  for (const part of parts) {
+    if (part) await bot.sendMessage(chatId, part);
+  }
+}
+
+// ─── File helpers ──────────────────────────────────────────────────────────
+function downloadTelegramFile(filePath) {
+  return new Promise((resolve, reject) => {
+    https.get(`https://api.telegram.org/file/bot${token}/${filePath}`, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`Download failed (${res.statusCode})`));
+        return;
+      }
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+    }).on("error", reject);
+  });
+}
+
+async function extractPdfText(buffer) {
+  const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), useSystemFonts: true }).promise;
+  const pages = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => item.str).join(" "));
+  }
+  return pages.join("\n\n");
+}
+
+async function extractDocumentText(fileName, buffer) {
+  const ext = path.extname(fileName || "").toLowerCase();
+  let text = "";
+
+  if ([".txt", ".md", ".csv", ".json", ".log"].includes(ext)) {
+    text = buffer.toString("utf8");
+  } else if (ext === ".pdf") {
+    text = await extractPdfText(buffer);
+  } else if (ext === ".docx") {
+    const mammoth = require("mammoth");
+    const result = await mammoth.extractRawText({ buffer });
+    text = result.value;
+  } else if ([".xlsx", ".xls"].includes(ext)) {
+    const XLSX = require("xlsx");
+    const wb = XLSX.read(buffer, { type: "buffer" });
+    text = wb.SheetNames.map((name) => {
+      const sheet = wb.Sheets[name];
+      return `Sheet: ${name}\n${XLSX.utils.sheet_to_csv(sheet)}`;
+    }).join("\n\n");
+  } else {
+    throw new Error(`unsupported:${ext || "unknown"}`);
+  }
+
+  text = text.replace(/\r\n/g, "\n").trim();
+  if (!text) throw new Error("empty");
+  if (text.length > MAX_DOC_CHARS) {
+    text = text.slice(0, MAX_DOC_CHARS) + "\n\n[Document truncated due to length — ask if you need a specific section analysed further.]";
+  }
+  return text;
 }
 
 // ─── Telegram bot ──────────────────────────────────────────────────────────
@@ -86,7 +233,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const conversations = {};
 const firstMessage = {};
 const lastProcessedMessageId = {};
-const pendingActivation = {};
+const welcomedUsers = {};
 
 const systemPrompt = `
 You are ${BOT_NAME}, a warm, intelligent and deeply knowledgeable assistant for Pathway Prep — a programme that gives individuals the knowledge, skills and confidence they need to prepare for work and opportunities abroad.
@@ -100,17 +247,19 @@ YOUR INTELLIGENCE AND TEACHING ABILITY:
 - When someone wants to learn something, become their tutor. Break topics down step by step, use simple real-life examples, check understanding naturally, and build on what they know
 - Adapt your depth to the user — if they seem advanced, go deeper; if they seem new to a topic, start from the basics
 - You can explain complex ideas in plain everyday language without dumbing it down
+- When the user sends an image or document, analyse it carefully in the context of the ongoing conversation. Give thorough, specific, and actionable feedback — not vague summaries
 - If a topic is outside Pathway Prep's scope or you genuinely don't know, say: "That's a great question — the support team would be best placed to help you with that. You can reach them at ${SUPPORT_EMAIL}"
 
 REPLY STYLE — VERY IMPORTANT:
-- Do NOT end every reply with a question. Only ask a question when you genuinely need more information to help, or when it naturally fits the conversation.
-- Keep replies concise and conversational — no long walls of text
-- Split information into short paragraphs if needed, but keep it digestible
-- Never use markdown formatting — no asterisks, no bullet dashes. Plain text only.
+- Write in a professional, polished tone with clear visual spacing
+- Use a blank line between every paragraph (double line break)
+- When listing points, use the bullet character • at the start of each line — never use asterisks, dashes, or markdown
+- Structure longer answers with a brief opening line, then spaced sections, then a clear closing if helpful
+- Do NOT end every reply with a question. Only ask when you genuinely need more information
 - Never echo back what the user just said
 - Never use robotic or corporate phrases
 - Never expose technical language to the user
-- When a user says "okay", "thanks", "bye", or signals the conversation is ending — respond warmly and briefly, then stop.
+- When a user says "okay", "thanks", "bye", or signals the conversation is ending — respond warmly and briefly, then stop
 - Always follow the user's lead if they change topic
 
 TUTORING MODE:
@@ -127,6 +276,121 @@ TONE:
 Always end conversations warmly, mentioning Pathway Prep by name.
 `.trim();
 
+function getHistory(chatId) {
+  if (!conversations[chatId]) conversations[chatId] = [];
+  return conversations[chatId];
+}
+
+function trimHistory(chatId) {
+  const history = getHistory(chatId);
+  if (history.length > MAX_HISTORY) {
+    conversations[chatId] = history.slice(-MAX_HISTORY);
+  }
+}
+
+async function chatText(chatId, userText, options = {}) {
+  const history = getHistory(chatId);
+  history.push({ role: "user", content: userText });
+
+  const response = await groq.chat.completions.create({
+    model: TEXT_MODEL,
+    max_tokens: MAX_TOKENS,
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...history
+    ]
+  });
+
+  const reply = response.choices[0].message.content;
+  history.push({ role: "assistant", content: reply });
+  trimHistory(chatId);
+  return reply;
+}
+
+async function chatVision(chatId, imageUrl, userText) {
+  const history = getHistory(chatId);
+  const prior = history.slice(-MAX_HISTORY);
+
+  const response = await groq.chat.completions.create({
+    model: VISION_MODEL,
+    max_tokens: MAX_TOKENS,
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...prior,
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: imageUrl } },
+          { type: "text", text: userText }
+        ]
+      }
+    ]
+  });
+
+  const reply = response.choices[0].message.content;
+  history.push({ role: "user", content: `[Image uploaded] ${userText}` });
+  history.push({ role: "assistant", content: reply });
+  trimHistory(chatId);
+  return reply;
+}
+
+function buildIntro(chatId) {
+  if (firstMessage[chatId] === false) {
+    firstMessage[chatId] = true;
+    return `[The user is chatting with you for the first time after activation. Briefly introduce yourself as ${BOT_NAME} in one warm sentence, then respond to their message below naturally and helpfully.]\n\n`;
+  }
+  return "";
+}
+
+async function handleActivationAttempt(msg, text) {
+  const chatId = msg.chat.id;
+
+  if (!looksLikeActivationCode(text)) {
+    if (!welcomedUsers[chatId]) {
+      welcomedUsers[chatId] = true;
+      return bot.sendMessage(chatId, welcomeMessage());
+    }
+    return bot.sendMessage(
+      chatId,
+      `When you're ready, enter your activation code to continue (for example: JB-XXXXXX).\n\nIf you don't have one, contact ${SUPPORT_EMAIL}.`
+    );
+  }
+
+  const code = text.trim().toUpperCase();
+  const result = activateCode(code, chatId, {
+    firstName: msg.from.first_name,
+    lastName: msg.from.last_name,
+    username: msg.from.username
+  });
+
+  if (result.ok) {
+    delete welcomedUsers[chatId];
+    firstMessage[chatId] = false;
+    if (ADMIN_CHAT_ID) {
+      bot.sendMessage(ADMIN_CHAT_ID, `New user activated: ${msg.from.first_name} (@${msg.from.username || "—"}) | Code: ${code}`).catch(() => {});
+    }
+    return bot.sendMessage(chatId, activationSuccessMessage());
+  }
+  if (result.reason === "used") {
+    return bot.sendMessage(chatId, `That code has already been used. Each code works for one account only.\n\nContact ${SUPPORT_EMAIL} if you need a new one.`);
+  }
+  return bot.sendMessage(chatId, `That code isn't valid. Please check it and try again, or contact ${SUPPORT_EMAIL} for help.`);
+}
+
+function gateAccess(msg) {
+  const chatId = msg.chat.id;
+  if (isBanned(chatId)) {
+    bot.sendMessage(chatId, `Your access has been restricted. Contact ${SUPPORT_EMAIL}.`);
+    return false;
+  }
+  if (!isAdmin(chatId) && !isActivated(chatId)) {
+    const text = msg.text || msg.caption || "";
+    handleActivationAttempt(msg, text || " ");
+    return false;
+  }
+  return true;
+}
+
 // ─── Bot handlers ──────────────────────────────────────────────────────────
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
@@ -142,11 +406,11 @@ bot.onText(/\/start/, (msg) => {
   }
 
   if (isActivated(chatId)) {
-    return bot.sendMessage(chatId, `Hello! I'm the ${BOT_NAME} 👋\n\nI'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\nHow can I help you today?`);
+    return bot.sendMessage(chatId, activationSuccessMessage());
   }
 
-  pendingActivation[chatId] = true;
-  bot.sendMessage(chatId, `Welcome to ${BOT_NAME} 👋\n\nTo get started, please enter your activation code.\n\nIf you don't have one, contact ${SUPPORT_EMAIL} to get access.`);
+  welcomedUsers[chatId] = true;
+  bot.sendMessage(chatId, welcomeMessage());
 });
 
 bot.onText(/\/forget/, (msg) => {
@@ -246,47 +510,16 @@ bot.on("message", async (msg) => {
 
   if (isBanned(chatId)) return bot.sendMessage(chatId, `Your access has been restricted. Contact ${SUPPORT_EMAIL}.`);
 
-  // Activation flow
-  if (!isAdmin(chatId) && (!isActivated(chatId) || pendingActivation[chatId])) {
-    const code = text.trim().toUpperCase();
-    const result = activateCode(code, chatId, { firstName: msg.from.first_name, username: msg.from.username });
-    if (result.ok) {
-      delete pendingActivation[chatId];
-      if (ADMIN_CHAT_ID) {
-        bot.sendMessage(ADMIN_CHAT_ID, `New user activated: ${msg.from.first_name} (@${msg.from.username || "—"}) | Code: ${code}`).catch(() => {});
-      }
-      return bot.sendMessage(chatId, `You're in! Welcome to ${BOT_NAME} 🎉\n\nI'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\nHow can I help you today?`);
-    } else if (result.reason === "used") {
-      return bot.sendMessage(chatId, `That code has already been used. Each code works for one account only.\n\nContact ${SUPPORT_EMAIL} if you need a new one.`);
-    } else {
-      return bot.sendMessage(chatId, `That code isn't valid. Please check it and try again, or contact ${SUPPORT_EMAIL} for help.`);
-    }
+  if (!isAdmin(chatId) && !isActivated(chatId)) {
+    return handleActivationAttempt(msg, text);
   }
 
   bot.sendChatAction(chatId, "typing");
-  if (!conversations[chatId]) conversations[chatId] = [];
-
-  let intro = "";
-  if (!firstMessage[chatId]) {
-    firstMessage[chatId] = true;
-    intro = `[The user has opened the chat without using /start. Greet them briefly and warmly as ${BOT_NAME}, then respond to their message below naturally.]\n\n`;
-  }
-
-  conversations[chatId].push({ role: "user", content: intro + text });
 
   try {
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      max_tokens: 1024,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...conversations[chatId]
-      ]
-    });
-    const reply = response.choices[0].message.content;
-    conversations[chatId].push({ role: "assistant", content: reply });
-    if (conversations[chatId].length > 30) conversations[chatId] = conversations[chatId].slice(-30);
-    await bot.sendMessage(chatId, reply);
+    const intro = buildIntro(chatId);
+    const reply = await chatText(chatId, intro + text);
+    await sendLongMessage(chatId, reply);
   } catch (err) {
     console.error("Message error:", err.message);
     await bot.sendMessage(chatId, "Something went wrong on my end — please try again in a moment.");
@@ -297,30 +530,73 @@ bot.on("photo", async (msg) => {
   const chatId = msg.chat.id;
   if (lastProcessedMessageId[chatId] === msg.message_id) return;
   lastProcessedMessageId[chatId] = msg.message_id;
-  if (!isAdmin(chatId) && !isActivated(chatId)) return;
+
+  saveUser(chatId, {
+    firstName: msg.from.first_name,
+    lastName: msg.from.last_name,
+    username: msg.from.username
+  });
+
+  if (!gateAccess(msg)) return;
+
   bot.sendChatAction(chatId, "typing");
   try {
     const photo = msg.photo[msg.photo.length - 1];
     const file = await bot.getFile(photo.file_id);
     const imageUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-    const response = await groq.chat.completions.create({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct",
-      max_tokens: 1024,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: [
-          { type: "image_url", image_url: { url: imageUrl } },
-          { type: "text", text: msg.caption || "What do you see here?" }
-        ]}
-      ]
-    });
-    const reply = response.choices[0].message.content;
-    if (!conversations[chatId]) conversations[chatId] = [];
-    conversations[chatId].push({ role: "assistant", content: reply });
-    await bot.sendMessage(chatId, reply);
+    const intro = buildIntro(chatId);
+    const prompt = intro + (msg.caption || "Please analyse this image in detail based on our conversation. Describe what you see and give helpful, specific feedback.");
+    const reply = await chatVision(chatId, imageUrl, prompt);
+    await sendLongMessage(chatId, reply);
   } catch (err) {
     console.error("Photo error:", err.message);
     await bot.sendMessage(chatId, "I couldn't read that image — could you try sending it again?");
+  }
+});
+
+bot.on("document", async (msg) => {
+  const chatId = msg.chat.id;
+  if (lastProcessedMessageId[chatId] === msg.message_id) return;
+  lastProcessedMessageId[chatId] = msg.message_id;
+
+  saveUser(chatId, {
+    firstName: msg.from.first_name,
+    lastName: msg.from.last_name,
+    username: msg.from.username
+  });
+
+  if (!gateAccess(msg)) return;
+
+  const doc = msg.document;
+  const fileName = doc.file_name || "file.bin";
+
+  bot.sendChatAction(chatId, "typing");
+  try {
+    const file = await bot.getFile(doc.file_id);
+    const buffer = await downloadTelegramFile(file.file_path);
+    const extracted = await extractDocumentText(fileName, buffer);
+    const intro = buildIntro(chatId);
+    const userPrompt =
+      intro +
+      (msg.caption
+        ? `${msg.caption}\n\n`
+        : "Please read the following document carefully and give a detailed, helpful response based on our conversation.\n\n") +
+      `File name: ${fileName}\n\n--- Document content ---\n${extracted}`;
+
+    const reply = await chatText(chatId, userPrompt);
+    await sendLongMessage(chatId, reply);
+  } catch (err) {
+    console.error("Document error:", err.message);
+    if (err.message.startsWith("unsupported:")) {
+      await bot.sendMessage(
+        chatId,
+        `I can't read that file type yet. Please send PDF, Word (.docx), Excel (.xlsx/.xls), or plain text files.\n\nYou can also paste the content as a message, or send a screenshot as an image.`
+      );
+    } else if (err.message === "empty") {
+      await bot.sendMessage(chatId, "That file appears to be empty or I couldn't extract any text from it. Could you try a different format?");
+    } else {
+      await bot.sendMessage(chatId, "I had trouble reading that file — could you try sending it again or in a different format?");
+    }
   }
 });
 
@@ -360,7 +636,6 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost`);
   const p = url.pathname;
 
-  // Serve admin panel (no API key needed for the HTML itself)
   if (req.method === "GET" && (p === "/" || p === "/admin")) {
     try {
       const html = fs.readFileSync(path.join(__dirname, "admin.html"), "utf8");
@@ -372,12 +647,10 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // Health check for deployment platforms
   if (req.method === "GET" && p === "/health") {
     return sendJSON(res, 200, { status: "ok" });
   }
 
-  // All API routes require the admin API key
   const apiKey = req.headers["x-api-key"];
   if (apiKey !== ADMIN_API_KEY) return sendJSON(res, 401, { error: "Unauthorized" });
 
@@ -454,5 +727,16 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`✅ Pathway Prep Bot is running!`);
-  console.log(`✅ Admin API running on port ${PORT}`);
+  console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
+}).on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`\n❌ Port ${PORT} is already in use. Stop the other process or set a different PORT in .env\n`);
+  } else {
+    console.error("\n❌ Server failed to start:", err.message, "\n");
+  }
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled error:", err.message || err);
 });

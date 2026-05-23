@@ -1,6 +1,7 @@
 services:
-  - type: worker
+  - type: web
     name: telegram-bot
     runtime: node
     buildCommand: npm install
     startCommand: node bot.js
+    healthCheckPath: /health
