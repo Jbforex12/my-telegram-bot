@@ -357,11 +357,29 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  const apiKey = req.headers["x-api-key"];
-  if (apiKey !== ADMIN_API_KEY) return sendJSON(res, 401, { error: "Unauthorized" });
-
   const url = new URL(req.url, `http://localhost`);
   const p = url.pathname;
+
+  // Serve admin panel (no API key needed for the HTML itself)
+  if (req.method === "GET" && (p === "/" || p === "/admin")) {
+    try {
+      const html = fs.readFileSync(path.join(__dirname, "admin.html"), "utf8");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(html);
+    } catch (e) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      return res.end("Admin panel not found.");
+    }
+  }
+
+  // Health check for deployment platforms
+  if (req.method === "GET" && p === "/health") {
+    return sendJSON(res, 200, { status: "ok" });
+  }
+
+  // All API routes require the admin API key
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey !== ADMIN_API_KEY) return sendJSON(res, 401, { error: "Unauthorized" });
 
   if (req.method === "GET" && p === "/api/stats") {
     const u = loadUsers(); const c = loadCodes();

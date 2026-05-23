@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pathway Prep — Admin</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1f2e;
+  --surface2: #242938;
+  --border: #2d3248;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --text: #e2e8f0;
+  --text-muted: #8892a4;
+  --radius: 10px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+}
+
+/* Login */
+#login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px;
+  width: 100%;
+  max-width: 420px;
+}
+.login-logo { font-size: 32px; margin-bottom: 12px; }
+.login-card h1 { font-size: 22px; margin-bottom: 4px; }
+.login-card .subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: 13px; }
+
+label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  margin-bottom: 16px;
+}
+input:focus, textarea:focus { border-color: var(--accent); }
+input[type="number"] { -moz-appearance: textfield; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: var(--radius);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.15s;
+  text-decoration: none;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { opacity: 0.85; }
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover:not(:disabled) { opacity: 0.85; }
+.btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover:not(:disabled) { background: var(--border); }
+.btn-sm { padding: 6px 12px; font-size: 12px; }
+.btn-full { width: 100%; }
+
+/* App */
+#app { display: none; height: 100vh; }
+.layout { display: flex; height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-logo {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-logo .logo-icon { font-size: 24px; }
+.sidebar-logo h2 { font-size: 15px; font-weight: 700; margin-top: 6px; }
+.sidebar-logo span { font-size: 11px; color: var(--text-muted); }
+
+.nav { padding: 12px 0; flex: 1; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-weight: 500;
+  font-size: 13px;
+  border-right: 3px solid transparent;
+  user-select: none;
+}
+.nav-item:hover { color: var(--text); background: var(--surface2); }
+.nav-item.active { color: var(--accent); background: rgba(99,102,241,0.08); border-right-color: var(--accent); }
+.nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+
+.sidebar-footer {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Main */
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px;
+  background: var(--bg);
+}
+
+.section { display: none; }
+.section.active { display: block; }
+
+.page-header { margin-bottom: 24px; }
+.page-header h1 { font-size: 22px; font-weight: 700; }
+.page-header p { color: var(--text-muted); margin-top: 4px; font-size: 13px; }
+
+/* Stats */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+.stat-value { font-size: 30px; font-weight: 800; }
+.stat-value.c-accent { color: var(--accent); }
+.stat-value.c-success { color: var(--success); }
+.stat-value.c-danger { color: var(--danger); }
+.stat-value.c-warning { color: var(--warning); }
+
+/* Card */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.card-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface2);
+}
+.card-header h3 { font-size: 14px; font-weight: 700; }
+
+/* Panel */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.panel h3 { font-size: 14px; font-weight: 700; margin-bottom: 16px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.form-row .field { min-width: 80px; }
+.form-row .field-wide { flex: 1; min-width: 160px; }
+.form-row input { margin-bottom: 0; }
+
+/* Table */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 500px; }
+th {
+  text-align: left;
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.015); }
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-success { background: rgba(34,197,94,0.15); color: var(--success); }
+.badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
+.badge-danger  { background: rgba(239,68,68,0.15);  color: var(--danger); }
+.badge-muted   { background: var(--surface2); color: var(--text-muted); }
+
+/* Code tag */
+.code-tag {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.code-tag:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Generated codes */
+.gen-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.gen-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.gen-chip:hover { border-color: var(--accent); background: rgba(99,102,241,0.08); }
+.gen-chip.copied { border-color: var(--success); color: var(--success); }
+.copy-all-btn { margin-top: 12px; }
+
+/* Empty state */
+.empty {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.empty-icon { font-size: 36px; margin-bottom: 12px; }
+.empty-text { font-size: 14px; }
+
+/* Error */
+.error-msg { color: var(--danger); font-size: 13px; margin-top: 8px; }
+
+/* Toast */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 9999;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: all 0.25s ease;
+  max-width: 340px;
+  pointer-events: none;
+}
+#toast.show { transform: translateY(0); opacity: 1; }
+#toast.t-success { border-color: var(--success); color: var(--success); }
+#toast.t-error   { border-color: var(--danger);  color: var(--danger); }
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-row { padding: 40px; text-align: center; }
+
+/* Row actions */
+.actions { display: flex; gap: 6px; }
+
+/* Responsive */
+@media (max-width: 680px) {
+  .sidebar { width: 56px; }
+  .sidebar-logo h2,
+  .sidebar-logo span,
+  .nav-item span:not(.nav-icon),
+  .sidebar-footer .nav-label { display: none; }
+  .main { padding: 16px; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .form-row { flex-direction: column; }
+  .form-row .field, .form-row .field-wide { width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Login ──────────────────────────────────────────── -->
+<div id="login">
+  <div class="login-card">
+    <div class="login-logo">🎓</div>
+    <h1>Pathway Prep Admin</h1>
+    <p class="subtitle">Enter your server details to access the dashboard</p>
+
+    <label>Server URL</label>
+    <input type="text" id="inp-url" placeholder="https://your-bot.up.railway.app" />
+
+    <label>Admin API Key</label>
+    <input type="password" id="inp-key" placeholder="Your ADMIN_API_KEY" />
+
+    <div id="login-err" class="error-msg"></div>
+
+    <button class="btn btn-primary btn-full" id="login-btn" onclick="doLogin()" style="margin-top:4px">
+      Connect
+    </button>
+  </div>
+</div>
+
+<!-- ── App ──────────────────────────────────────────────── -->
+<div id="app">
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">🎓</div>
+        <h2>Pathway Prep</h2>
+        <span>Admin</span>
+      </div>
+      <div class="nav">
+        <div class="nav-item active" id="nav-dashboard" onclick="go('dashboard')">
+          <span class="nav-icon">📊</span><span>Dashboard</span>
+        </div>
+        <div class="nav-item" id="nav-codes" onclick="go('codes')">
+          <span class="nav-icon">🔑</span><span>Codes</span>
+        </div>
+        <div class="nav-item" id="nav-users" onclick="go('users')">
+          <span class="nav-icon">👥</span><span>Users</span>
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="nav-item" onclick="doLogout()">
+          <span class="nav-icon">🚪</span><span class="nav-label">Logout</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <main class="main">
+
+      <!-- Dashboard -->
+      <div class="section active" id="section-dashboard">
+        <div class="page-header">
+          <h1>Dashboard</h1>
+          <p>Live overview of your bot</p>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Users</div>
+            <div class="stat-value c-accent" id="s-users">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Banned</div>
+            <div class="stat-value c-danger" id="s-banned">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Codes</div>
+            <div class="stat-value" id="s-total">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Used</div>
+            <div class="stat-value c-success" id="s-used">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unused</div>
+            <div class="stat-value c-warning" id="s-unused">—</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <button class="btn btn-ghost btn-sm" onclick="loadStats()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Codes -->
+      <div class="section" id="section-codes">
+        <div class="page-header">
+          <h1>Activation Codes</h1>
+          <p>Generate and manage single-use access codes</p>
+        </div>
+
+        <div class="panel">
+          <h3>Generate Codes</h3>
+          <div class="form-row">
+            <div class="field">
+              <label>Count</label>
+              <input type="number" id="gen-count" value="1" min="1" max="50" style="width:80px" />
+            </div>
+            <div class="field field-wide">
+              <label>Label / Note (optional)</label>
+              <input type="text" id="gen-note" placeholder="e.g. Batch 1 — June 2026" />
+            </div>
+            <button class="btn btn-primary" onclick="generateCodes()">Generate</button>
+          </div>
+          <div id="gen-output"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>All Codes</h3>
+            <button class="btn btn-ghost btn-sm" onclick="loadCodes()">↻ Refresh</button>
+          </div>
+          <div class="table-wrap" id="codes-wrap">
+            <div class="loading-row"><div class="spinner"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Users -->
+      <div class="section" id="section-users">
+        <div class="page-header">
+          <h1>Users</h1>
+          <p>View and manage user access</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>All Users</h3>
+            <button class="btn btn-ghost btn-sm" onclick="loadUsers()">↻ Refresh</button>
+          </div>
+          <div class="table-wrap" id="users-wrap">
+            <div class="loading-row"><div class="spinner"></div></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let BASE = '', KEY = '';
+
+// ── Init ────────────────────────────────────────────────
+function init() {
+  const savedUrl = localStorage.getItem('pp_url') || '';
+  const savedKey = sessionStorage.getItem('pp_key') || '';
+  document.getElementById('inp-url').value = savedUrl || window.location.origin;
+  if (savedUrl && savedKey) {
+    BASE = savedUrl;
+    KEY = savedKey;
+    showApp();
+  }
+  document.getElementById('inp-key').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+}
+
+// ── Auth ────────────────────────────────────────────────
+async function doLogin() {
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-err');
+  const url = document.getElementById('inp-url').value.trim().replace(/\/$/, '');
+  const key = document.getElementById('inp-key').value.trim();
+  err.textContent = '';
+  if (!url || !key) { err.textContent = 'Please fill in both fields.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  try {
+    const r = await fetch(`${url}/api/stats`, { headers: { 'X-API-Key': key } });
+    if (r.status === 401) { err.textContent = 'Wrong API key — check your ADMIN_API_KEY.'; return; }
+    if (!r.ok) { err.textContent = `Server error ${r.status}. Check the URL.`; return; }
+    BASE = url;
+    KEY = key;
+    localStorage.setItem('pp_url', url);
+    sessionStorage.setItem('pp_key', key);
+    showApp();
+  } catch {
+    err.textContent = 'Cannot reach server. Check the URL and that the bot is running.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+  }
+}
+
+function doLogout() {
+  sessionStorage.removeItem('pp_key');
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  go('dashboard');
+}
+
+// ── Navigation ───────────────────────────────────────────
+function go(section) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + section).classList.add('active');
+  document.getElementById('nav-' + section).classList.add('active');
+  if (section === 'dashboard') loadStats();
+  if (section === 'codes')    loadCodes();
+  if (section === 'users')    loadUsers();
+}
+
+// ── API helper ───────────────────────────────────────────
+async function api(path, opts = {}) {
+  const r = await fetch(BASE + path, {
+    ...opts,
+    headers: {
+      'X-API-Key': KEY,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {})
+    }
+  });
+  if (r.status === 401) { doLogout(); return null; }
+  return r.json();
+}
+
+// ── Dashboard ────────────────────────────────────────────
+async function loadStats() {
+  const d = await api('/api/stats');
+  if (!d) return;
+  document.getElementById('s-users').textContent  = d.totalUsers;
+  document.getElementById('s-banned').textContent = d.bannedUsers;
+  document.getElementById('s-total').textContent  = d.totalCodes;
+  document.getElementById('s-used').textContent   = d.usedCodes;
+  document.getElementById('s-unused').textContent = d.unusedCodes;
+}
+
+// ── Codes ────────────────────────────────────────────────
+async function loadCodes() {
+  const wrap = document.getElementById('codes-wrap');
+  wrap.innerHTML = '<div class="loading-row"><div class="spinner"></div></div>';
+  const d = await api('/api/codes');
+  if (!d) return;
+
+  const codes = d.codes;
+  if (!codes.length) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-icon">🔑</div><div class="empty-text">No codes yet. Generate some above.</div></div>';
+    return;
+  }
+
+  const sorted = [
+    ...codes.filter(c => !c.usedBy),
+    ...codes.filter(c => c.usedBy)
+  ];
+
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Status</th>
+          <th>Activated By</th>
+          <th>Note</th>
+          <th>Created</th>
+          <th>Used</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sorted.map(c => {
+          const uName = c.userName || (c.userUsername ? '@' + cleanAt(c.userUsername) : null) || (c.usedBy || null);
+          return `<tr>
+            <td><span class="code-tag" onclick="copy('${c.code}')" title="Click to copy">${c.code}</span></td>
+            <td>${c.usedBy
+              ? '<span class="badge badge-success">✓ Used</span>'
+              : '<span class="badge badge-warning">⏳ Unused</span>'}</td>
+            <td>${c.usedBy
+              ? `<div>${esc(c.userName || '—')}</div>${c.userUsername ? `<div style="color:var(--text-muted);font-size:11px">@${cleanAt(c.userUsername)}</div>` : ''}`
+              : '<span style="color:var(--text-muted)">—</span>'}</td>
+            <td style="color:var(--text-muted)">${esc(c.note || '—')}</td>
+            <td style="color:var(--text-muted);font-size:11px;white-space:nowrap">${fmt(c.createdAt)}</td>
+            <td style="color:var(--text-muted);font-size:11px;white-space:nowrap">${c.usedAt ? fmt(c.usedAt) : '—'}</td>
+            <td>
+              ${!c.usedBy
+                ? `<button class="btn btn-danger btn-sm" onclick="deleteCode('${c.code}')">Delete</button>`
+                : ''}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function generateCodes() {
+  const count = Math.max(1, Math.min(50, parseInt(document.getElementById('gen-count').value) || 1));
+  const note  = document.getElementById('gen-note').value.trim();
+  const d = await api('/api/codes/generate', {
+    method: 'POST',
+    body: JSON.stringify({ count, note })
+  });
+  if (!d) return;
+
+  const out = document.getElementById('gen-output');
+  out.innerHTML = `
+    <div class="gen-grid" id="gen-chips">
+      ${d.codes.map(code => `
+        <div class="gen-chip" id="chip-${code}" onclick="copyChip('${code}')">
+          <span>📋</span>${code}
+        </div>
+      `).join('')}
+    </div>
+    ${d.codes.length > 1 ? `<button class="btn btn-ghost btn-sm copy-all-btn" onclick="copyAll(${JSON.stringify(d.codes)})">Copy All</button>` : ''}
+  `;
+  toast(`Generated ${d.codes.length} code${d.codes.length > 1 ? 's' : ''}`, 'success');
+  loadCodes();
+}
+
+async function deleteCode(code) {
+  if (!confirm(`Delete unused code ${code}?\nThis cannot be undone.`)) return;
+  const d = await api('/api/codes/' + code, { method: 'DELETE' });
+  if (d && d.success) { toast('Code deleted', 'success'); loadCodes(); }
+  else toast(d?.error || 'Error deleting code', 'error');
+}
+
+// ── Users ────────────────────────────────────────────────
+async function loadUsers() {
+  const wrap = document.getElementById('users-wrap');
+  wrap.innerHTML = '<div class="loading-row"><div class="spinner"></div></div>';
+  const d = await api('/api/users');
+  if (!d) return;
+
+  const users = d.users;
+  if (!users.length) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">No users yet.</div></div>';
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Telegram ID</th>
+          <th>Status</th>
+          <th>Code Used</th>
+          <th>Messages</th>
+          <th>Last Seen</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${users.map(u => {
+          const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || '—';
+          const uname = u.username ? '@' + cleanAt(u.username) : null;
+          return `<tr>
+            <td>
+              <div style="font-weight:600">${esc(name)}</div>
+              ${uname ? `<div style="color:var(--text-muted);font-size:11px">${esc(uname)}</div>` : ''}
+            </td>
+            <td><code style="font-size:11px;color:var(--text-muted)">${u.chatId}</code></td>
+            <td>
+              ${u.banned
+                ? '<span class="badge badge-danger">🚫 Blocked</span>'
+                : u.activated
+                  ? '<span class="badge badge-success">✓ Active</span>'
+                  : '<span class="badge badge-warning">⏳ Pending</span>'}
+            </td>
+            <td>
+              ${u.activationCode
+                ? `<span class="code-tag" onclick="copy('${u.activationCode}')">${u.activationCode}</span>`
+                : '<span style="color:var(--text-muted)">—</span>'}
+            </td>
+            <td style="color:var(--text-muted)">${u.messageCount || 0}</td>
+            <td style="color:var(--text-muted);font-size:11px;white-space:nowrap">${fmt(u.lastSeen)}</td>
+            <td>
+              ${u.banned
+                ? `<button class="btn btn-success btn-sm" onclick="unbanUser('${u.chatId}', '${esc(name)}')">Unblock</button>`
+                : `<button class="btn btn-danger btn-sm" onclick="banUser('${u.chatId}', '${esc(name)}')">Block</button>`}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function banUser(id, name) {
+  const reason = prompt(`Reason for blocking ${name}?`, 'Blocked by admin');
+  if (reason === null) return;
+  const d = await api(`/api/users/${id}/ban`, { method: 'POST', body: JSON.stringify({ reason }) });
+  if (d && d.success) { toast(`${name} has been blocked`, 'success'); loadUsers(); loadStats(); }
+  else toast(d?.error || 'Error', 'error');
+}
+
+async function unbanUser(id, name) {
+  if (!confirm(`Unblock ${name}?`)) return;
+  const d = await api(`/api/users/${id}/unban`, { method: 'POST' });
+  if (d && d.success) { toast(`${name} has been unblocked`, 'success'); loadUsers(); loadStats(); }
+  else toast(d?.error || 'Error', 'error');
+}
+
+// ── Helpers ──────────────────────────────────────────────
+function cleanAt(s) { return s ? s.replace(/^@/, '') : s; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function fmt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })
+       + '<br>' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+
+function copy(text) {
+  navigator.clipboard.writeText(text)
+    .then(() => toast('Copied: ' + text, 'success'))
+    .catch(() => toast('Copy failed — try manually', 'error'));
+}
+
+function copyChip(code) {
+  const el = document.getElementById('chip-' + code);
+  navigator.clipboard.writeText(code).then(() => {
+    if (el) { el.classList.add('copied'); el.innerHTML = '✓ Copied!'; }
+    toast('Copied: ' + code, 'success');
+  });
+}
+
+function copyAll(codes) {
+  navigator.clipboard.writeText(codes.join('\n'))
+    .then(() => toast('All codes copied!', 'success'));
+}
+
+let _toast;
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show t-' + type;
+  clearTimeout(_toast);
+  _toast = setTimeout(() => { el.className = ''; }, 3200);
+}
+
+init();
+</script>
+</body>
+</html>
