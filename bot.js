@@ -12,8 +12,10 @@ const SUPPORT_EMAIL = "support@pathwayprep.com";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? String(process.env.ADMIN_CHAT_ID) : null;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-key";
 const PORT = process.env.PORT || 3001;
-const USERS_FILE = path.join(__dirname, "users.json");
-const CODES_FILE = path.join(__dirname, "codes.json");
+// DATA_DIR keeps codes/users across deploys (set to Render disk path in production)
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+const CODES_FILE = path.join(DATA_DIR, "codes.json");
 const TEXT_MODEL = "llama-3.3-70b-versatile";
 const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const MAX_TOKENS = 2048;
@@ -42,17 +44,79 @@ function requireEnv() {
 }
 requireEnv();
 
-// ─── Data helpers ──────────────────────────────────────────────────────────
+// ─── Data helpers (codes/users are NEVER wiped by code edits — only by explicit actions) ──
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
 function loadJSON(file, def) {
-  try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) {}
-  return def;
+  ensureDataDir();
+  const backup = file + ".bak";
+  const tryParse = (raw) => {
+    if (!raw || !raw.trim()) return null;
+    return JSON.parse(raw);
+  };
+  try {
+    if (fs.existsSync(file)) {
+      const data = tryParse(fs.readFileSync(file, "utf8"));
+      if (data !== null) return data;
+      console.error(`Data file empty or invalid, trying backup: ${file}`);
+    }
+  } catch (e) {
+    console.error(`Load error ${path.basename(file)}:`, e.message);
+  }
+  try {
+    if (fs.existsSync(backup)) {
+      const data = tryParse(fs.readFileSync(backup, "utf8"));
+      if (data !== null) {
+        console.log(`Restored ${path.basename(file)} from backup`);
+        saveJSON(file, data, { allowEmpty: true });
+        return data;
+      }
+    }
+  } catch (e) {
+    console.error(`Backup load error ${path.basename(file)}:`, e.message);
+  }
+  return JSON.parse(JSON.stringify(def));
 }
-function saveJSON(file, data) {
-  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); } catch (e) { console.error("Save error:", e.message); }
+
+function saveJSON(file, data, opts = {}) {
+  ensureDataDir();
+  try {
+    if (file === CODES_FILE && data.codes && !opts.allowEmpty) {
+      const count = Object.keys(data.codes).length;
+      if (count === 0 && fs.existsSync(file)) {
+        try {
+          const existing = JSON.parse(fs.readFileSync(file, "utf8"));
+          if (existing.codes && Object.keys(existing.codes).length > 0) {
+            console.error("Refused to save empty codes.json over existing codes");
+            return;
+          }
+        } catch (e) { /* proceed if unreadable */ }
+      }
+    }
+    const tmp = file + ".tmp";
+    const backup = file + ".bak";
+    if (fs.existsSync(file)) fs.copyFileSync(file, backup);
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    console.error("Save error:", e.message);
+  }
 }
-function loadUsers() { return loadJSON(USERS_FILE, { users: {}, banned: {} }); }
+
+function loadUsers() {
+  const data = loadJSON(USERS_FILE, { users: {}, banned: {} });
+  if (!data.users) data.users = {};
+  if (!data.banned) data.banned = {};
+  return data;
+}
 function saveUsers(d) { saveJSON(USERS_FILE, d); }
-function loadCodes() { return loadJSON(CODES_FILE, { codes: {} }); }
+function loadCodes() {
+  const data = loadJSON(CODES_FILE, { codes: {} });
+  if (!data.codes) data.codes = {};
+  return data;
+}
 function saveCodes(d) { saveJSON(CODES_FILE, d); }
 
 // ─── Code helpers ──────────────────────────────────────────────────────────
@@ -636,6 +700,19 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost`);
   const p = url.pathname;
 
+  if (req.method === "GET" && p === "/manifest.json") {
+    return sendJSON(res, 200, {
+      name: "Pathway Prep Admin",
+      short_name: "PP Admin",
+      description: "Manage activation codes and users",
+      start_url: "/admin",
+      display: "standalone",
+      background_color: "#0f1117",
+      theme_color: "#6366f1",
+      orientation: "portrait"
+    });
+  }
+
   if (req.method === "GET" && (p === "/" || p === "/admin")) {
     try {
       const html = fs.readFileSync(path.join(__dirname, "admin.html"), "utf8");
@@ -726,8 +803,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
+  const codeCount = Object.keys(loadCodes().codes).length;
+  const userCount = Object.keys(loadUsers().users).length;
   console.log(`✅ Pathway Prep Bot is running!`);
   console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
+  console.log(`📁 Data folder: ${DATA_DIR} (${codeCount} codes, ${userCount} users loaded)`);
 }).on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(`\n❌ Port ${PORT} is already in use. Stop the other process or set a different PORT in .env\n`);

@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366f1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PP Admin">
+<link rel="manifest" href="/manifest.json">
 <title>Pathway Prep — Admin</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -22,12 +26,19 @@
   --radius: 10px;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  min-height: 100dvh;
   font-size: 14px;
+  overflow-x: hidden;
 }
 
 /* Login */
@@ -105,8 +116,23 @@ input[type="number"] { -moz-appearance: textfield; }
 .btn-full { width: 100%; }
 
 /* App */
-#app { display: none; height: 100vh; }
-.layout { display: flex; height: 100vh; }
+#app {
+  display: none;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  max-width: 100vw;
+  overflow: hidden;
+}
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  max-width: 100vw;
+}
 
 /* Sidebar */
 .sidebar {
@@ -149,12 +175,30 @@ input[type="number"] { -moz-appearance: textfield; }
   border-top: 1px solid var(--border);
 }
 
+/* Mobile top bar */
+.mobile-header {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  padding-top: calc(14px + env(safe-area-inset-top));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mobile-header .logo-icon { font-size: 22px; }
+.mobile-header h2 { font-size: 16px; font-weight: 700; }
+.mobile-header span { font-size: 11px; color: var(--text-muted); display: block; }
+
 /* Main */
 .main {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 28px;
   background: var(--bg);
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .section { display: none; }
@@ -228,30 +272,74 @@ input[type="number"] { -moz-appearance: textfield; }
 .form-row .field { min-width: 80px; }
 .form-row .field-wide { flex: 1; min-width: 160px; }
 .form-row input { margin-bottom: 0; }
+.input-count { width: 80px; }
+.btn-generate { align-self: flex-end; }
 
-/* Table */
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; min-width: 500px; }
-th {
-  text-align: left;
-  padding: 10px 16px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+/* List cards (mobile-friendly) */
+.list-wrap { padding: 12px; }
+.item-cards { display: flex; flex-direction: column; gap: 12px; }
+.item-card {
   background: var(--surface2);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
 }
-td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+.item-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.item-card-title {
+  font-weight: 700;
+  font-size: 15px;
+  word-break: break-word;
+}
+.item-card-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.item-card-rows { display: flex; flex-direction: column; gap: 0; }
+.item-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
   font-size: 13px;
-  vertical-align: middle;
 }
-tr:last-child td { border-bottom: none; }
-tr:hover td { background: rgba(255,255,255,0.015); }
+.item-card-row .label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.item-card-row .value {
+  text-align: right;
+  word-break: break-word;
+  max-width: 65%;
+}
+.item-card-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+.item-card-actions .btn { flex: 1; min-height: 44px; }
+
+@media (min-width: 900px) {
+  .item-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+}
 
 /* Badge */
 .badge {
@@ -360,17 +448,121 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 /* Row actions */
 .actions { display: flex; gap: 6px; }
 
-/* Responsive */
-@media (max-width: 680px) {
-  .sidebar { width: 56px; }
-  .sidebar-logo h2,
-  .sidebar-logo span,
-  .nav-item span:not(.nav-icon),
-  .sidebar-footer .nav-label { display: none; }
-  .main { padding: 16px; }
-  .stats-grid { grid-template-columns: 1fr 1fr; }
-  .form-row { flex-direction: column; }
-  .form-row .field, .form-row .field-wide { width: 100%; }
+.mobile-nav { display: none; }
+
+/* Desktop layout */
+@media (min-width: 769px) {
+  .layout { flex-direction: row; height: 100vh; height: 100dvh; }
+  .mobile-header { display: none !important; }
+  .mobile-nav { display: none !important; }
+  .main { padding-bottom: 28px; }
+}
+
+/* Mobile & tablet */
+@media (max-width: 768px) {
+  #login { padding: 16px; padding-top: calc(16px + env(safe-area-inset-top)); }
+  .login-card { padding: 24px 18px; border-radius: 14px; }
+  .login-card h1 { font-size: 20px; }
+  input[type="text"],
+  input[type="password"],
+  input[type="number"] { font-size: 16px; padding: 12px 14px; }
+
+  .sidebar { display: none !important; }
+  .mobile-header { display: flex; }
+  .layout { flex: 1; min-height: 0; overflow: hidden; }
+
+  .main {
+    padding: 16px;
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+
+  .page-header { margin-bottom: 16px; }
+  .page-header h1 { font-size: 20px; }
+  .page-header p { font-size: 12px; }
+
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .stat-card { padding: 14px; }
+  .stat-value { font-size: 24px; }
+
+  .panel { padding: 16px; }
+  .card { border-radius: 12px; margin-bottom: 16px; }
+  .card-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .card-header .btn { width: 100%; }
+
+  .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .form-row .field,
+  .form-row .field-wide { width: 100%; min-width: 0; }
+  .form-row input[type="number"] { width: 100% !important; }
+  .form-row .btn-primary { width: 100%; min-height: 48px; }
+
+  .gen-grid { flex-direction: column; }
+  .gen-chip { width: 100%; justify-content: center; min-height: 48px; font-size: 15px; }
+
+  .btn, .btn-sm { min-height: 44px; padding: 12px 16px; font-size: 14px; }
+  .list-wrap { padding: 10px; }
+  .code-tag {
+    padding: 8px 12px;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  #toast {
+    left: 16px;
+    right: 16px;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    max-width: none;
+  }
+
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    justify-content: space-around;
+    gap: 2px;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.35);
+  }
+  .mobile-nav button {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    padding: 6px 2px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 10px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-nav button.active {
+    color: var(--accent);
+    background: rgba(99,102,241,0.15);
+  }
+  .mobile-nav button span:first-child { font-size: 22px; line-height: 1; }
 }
 </style>
 </head>
@@ -381,13 +573,21 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <div class="login-card">
     <div class="login-logo">🎓</div>
     <h1>Pathway Prep Admin</h1>
-    <p class="subtitle">Enter your server details to access the dashboard</p>
+    <p class="subtitle" id="login-subtitle">Sign in to manage codes and users from any device</p>
 
-    <label>Server URL</label>
-    <input type="text" id="inp-url" placeholder="https://your-bot.up.railway.app" />
+    <div id="url-field">
+      <label>Server URL</label>
+      <input type="text" id="inp-url" placeholder="https://your-bot.onrender.com" />
+      <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px">On your phone, use your deployed bot URL (not localhost).</p>
+    </div>
 
     <label>Admin API Key</label>
-    <input type="password" id="inp-key" placeholder="Your ADMIN_API_KEY" />
+    <input type="password" id="inp-key" placeholder="Your ADMIN_API_KEY" autocomplete="current-password" />
+
+    <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;font-weight:500;color:var(--text);margin-bottom:16px">
+      <input type="checkbox" id="remember-device" checked style="width:auto;margin:0" />
+      Remember on this device
+    </label>
 
     <div id="login-err" class="error-msg"></div>
 
@@ -400,6 +600,14 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <!-- ── App ──────────────────────────────────────────────── -->
 <div id="app">
   <div class="layout">
+
+    <header class="mobile-header">
+      <div class="logo-icon">🎓</div>
+      <div>
+        <h2>Pathway Prep</h2>
+        <span>Admin</span>
+      </div>
+    </header>
 
     <!-- Sidebar -->
     <nav class="sidebar">
@@ -474,13 +682,13 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <div class="form-row">
             <div class="field">
               <label>Count</label>
-              <input type="number" id="gen-count" value="1" min="1" max="50" style="width:80px" />
+              <input type="number" id="gen-count" value="1" min="1" max="50" class="input-count" />
             </div>
             <div class="field field-wide">
               <label>Label / Note (optional)</label>
               <input type="text" id="gen-note" placeholder="e.g. Batch 1 — June 2026" />
             </div>
-            <button class="btn btn-primary" onclick="generateCodes()">Generate</button>
+            <button class="btn btn-primary btn-generate" onclick="generateCodes()">Generate codes</button>
           </div>
           <div id="gen-output"></div>
         </div>
@@ -490,7 +698,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
             <h3>All Codes</h3>
             <button class="btn btn-ghost btn-sm" onclick="loadCodes()">↻ Refresh</button>
           </div>
-          <div class="table-wrap" id="codes-wrap">
+          <div class="list-wrap" id="codes-wrap">
             <div class="loading-row"><div class="spinner"></div></div>
           </div>
         </div>
@@ -507,7 +715,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
             <h3>All Users</h3>
             <button class="btn btn-ghost btn-sm" onclick="loadUsers()">↻ Refresh</button>
           </div>
-          <div class="table-wrap" id="users-wrap">
+          <div class="list-wrap" id="users-wrap">
             <div class="loading-row"><div class="spinner"></div></div>
           </div>
         </div>
@@ -515,6 +723,13 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
     </main>
   </div>
+
+  <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation">
+    <button type="button" id="mob-dashboard" onclick="go('dashboard')"><span>📊</span><span>Home</span></button>
+    <button type="button" id="mob-codes" onclick="go('codes')"><span>🔑</span><span>Codes</span></button>
+    <button type="button" id="mob-users" onclick="go('users')"><span>👥</span><span>Users</span></button>
+    <button type="button" onclick="doLogout()"><span>🚪</span><span>Logout</span></button>
+  </nav>
 </div>
 
 <div id="toast"></div>
@@ -522,66 +737,120 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <script>
 let BASE = '', KEY = '';
 
-// ── Init ────────────────────────────────────────────────
-function init() {
-  const savedUrl = localStorage.getItem('pp_url') || '';
-  const savedKey = sessionStorage.getItem('pp_key') || '';
-  document.getElementById('inp-url').value = savedUrl || window.location.origin;
-  if (savedUrl && savedKey) {
-    BASE = savedUrl;
-    KEY = savedKey;
-    showApp();
+function isLocalHost() {
+  const h = window.location.hostname;
+  return h === 'localhost' || h === '127.0.0.1';
+}
+
+function getServerUrl() {
+  if (!isLocalHost()) return window.location.origin;
+  return document.getElementById('inp-url').value.trim().replace(/\/$/, '');
+}
+
+function saveCredentials(url, key) {
+  localStorage.setItem('pp_url', url);
+  if (document.getElementById('remember-device').checked) {
+    localStorage.setItem('pp_key', key);
+    sessionStorage.removeItem('pp_key');
+  } else {
+    sessionStorage.setItem('pp_key', key);
+    localStorage.removeItem('pp_key');
   }
+}
+
+function getSavedKey() {
+  return localStorage.getItem('pp_key') || sessionStorage.getItem('pp_key') || '';
+}
+
+// ── Init ────────────────────────────────────────────────
+async function init() {
+  const savedUrl = localStorage.getItem('pp_url') || '';
+  const savedKey = getSavedKey();
+  const onServer = !isLocalHost();
+
+  document.getElementById('inp-url').value = onServer ? window.location.origin : (savedUrl || window.location.origin);
+
+  if (onServer) {
+    document.getElementById('url-field').style.display = 'none';
+    document.getElementById('login-subtitle').textContent =
+      'You are on your live admin site. Enter your API key to continue.';
+  }
+
+  if (savedKey) document.getElementById('inp-key').value = savedKey;
+
   document.getElementById('inp-key').addEventListener('keydown', e => {
     if (e.key === 'Enter') doLogin();
   });
+
+  if (savedKey && (onServer || savedUrl)) {
+    await doLogin(true);
+  }
 }
 
 // ── Auth ────────────────────────────────────────────────
-async function doLogin() {
+async function doLogin(auto = false) {
   const btn = document.getElementById('login-btn');
   const err = document.getElementById('login-err');
-  const url = document.getElementById('inp-url').value.trim().replace(/\/$/, '');
+  const url = getServerUrl();
   const key = document.getElementById('inp-key').value.trim();
-  err.textContent = '';
-  if (!url || !key) { err.textContent = 'Please fill in both fields.'; return; }
+  if (!auto) err.textContent = '';
+  if (!url || !key) {
+    if (!auto) err.textContent = 'Please enter your Admin API Key.';
+    return;
+  }
 
-  btn.disabled = true;
-  btn.textContent = 'Connecting…';
+  if (!auto) {
+    btn.disabled = true;
+    btn.textContent = 'Connecting…';
+  }
   try {
     const r = await fetch(`${url}/api/stats`, { headers: { 'X-API-Key': key } });
-    if (r.status === 401) { err.textContent = 'Wrong API key — check your ADMIN_API_KEY.'; return; }
-    if (!r.ok) { err.textContent = `Server error ${r.status}. Check the URL.`; return; }
+    if (r.status === 401) {
+      if (!auto) err.textContent = 'Wrong API key — check your ADMIN_API_KEY.';
+      return;
+    }
+    if (!r.ok) {
+      if (!auto) err.textContent = `Server error ${r.status}. Check the URL and that the bot is running.`;
+      return;
+    }
     BASE = url;
     KEY = key;
-    localStorage.setItem('pp_url', url);
-    sessionStorage.setItem('pp_key', key);
+    saveCredentials(url, key);
     showApp();
   } catch {
-    err.textContent = 'Cannot reach server. Check the URL and that the bot is running.';
+    if (!auto) err.textContent = 'Cannot reach server. Deploy the bot online (e.g. Render) and open that URL on your phone.';
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Connect';
+    if (!auto) {
+      btn.disabled = false;
+      btn.textContent = 'Connect';
+    }
   }
 }
 
 function doLogout() {
+  localStorage.removeItem('pp_key');
   sessionStorage.removeItem('pp_key');
   location.reload();
 }
 
 function showApp() {
   document.getElementById('login').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('app').style.flexDirection = 'column';
   go('dashboard');
+  window.scrollTo(0, 0);
 }
 
 // ── Navigation ───────────────────────────────────────────
 function go(section) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.mobile-nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('section-' + section).classList.add('active');
-  document.getElementById('nav-' + section).classList.add('active');
+  const nav = document.getElementById('nav-' + section);
+  if (nav) nav.classList.add('active');
+  const mob = document.getElementById('mob-' + section);
+  if (mob) mob.classList.add('active');
   if (section === 'dashboard') loadStats();
   if (section === 'codes')    loadCodes();
   if (section === 'users')    loadUsers();
@@ -630,43 +899,29 @@ async function loadCodes() {
     ...codes.filter(c => c.usedBy)
   ];
 
-  wrap.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Code</th>
-          <th>Status</th>
-          <th>Activated By</th>
-          <th>Note</th>
-          <th>Created</th>
-          <th>Used</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${sorted.map(c => {
-          const uName = c.userName || (c.userUsername ? '@' + cleanAt(c.userUsername) : null) || (c.usedBy || null);
-          return `<tr>
-            <td><span class="code-tag" onclick="copy('${c.code}')" title="Click to copy">${c.code}</span></td>
-            <td>${c.usedBy
-              ? '<span class="badge badge-success">✓ Used</span>'
-              : '<span class="badge badge-warning">⏳ Unused</span>'}</td>
-            <td>${c.usedBy
-              ? `<div>${esc(c.userName || '—')}</div>${c.userUsername ? `<div style="color:var(--text-muted);font-size:11px">@${cleanAt(c.userUsername)}</div>` : ''}`
-              : '<span style="color:var(--text-muted)">—</span>'}</td>
-            <td style="color:var(--text-muted)">${esc(c.note || '—')}</td>
-            <td style="color:var(--text-muted);font-size:11px;white-space:nowrap">${fmt(c.createdAt)}</td>
-            <td style="color:var(--text-muted);font-size:11px;white-space:nowrap">${c.usedAt ? fmt(c.usedAt) : '—'}</td>
-            <td>
-              ${!c.usedBy
-                ? `<button class="btn btn-danger btn-sm" onclick="deleteCode('${c.code}')">Delete</button>`
-                : ''}
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
-  `;
+  wrap.className = 'list-wrap';
+  wrap.innerHTML = `<div class="item-cards">${sorted.map(c => {
+    const status = c.usedBy
+      ? '<span class="badge badge-success">✓ Used</span>'
+      : '<span class="badge badge-warning">⏳ Unused</span>';
+    const userLine = c.usedBy
+      ? `${esc(c.userName || '—')}${c.userUsername ? ' · @' + esc(cleanAt(c.userUsername)) : ''}`
+      : '—';
+    return `
+      <div class="item-card">
+        <div class="item-card-top">
+          <span class="code-tag" onclick="copy('${c.code}')" title="Tap to copy">${c.code}</span>
+          ${status}
+        </div>
+        <div class="item-card-rows">
+          <div class="item-card-row"><span class="label">User</span><span class="value">${userLine}</span></div>
+          <div class="item-card-row"><span class="label">Note</span><span class="value">${esc(c.note || '—')}</span></div>
+          <div class="item-card-row"><span class="label">Created</span><span class="value">${fmtShort(c.createdAt)}</span></div>
+          <div class="item-card-row"><span class="label">Used</span><span class="value">${c.usedAt ? fmtShort(c.usedAt) : '—'}</span></div>
+        </div>
+        ${!c.usedBy ? `<div class="item-card-actions"><button class="btn btn-danger btn-sm" onclick="deleteCode('${c.code}')">Delete code</button></div>` : ''}
+      </div>`;
+  }).join('')}</div>`;
 }
 
 async function generateCodes() {
@@ -713,53 +968,40 @@ async function loadUsers() {
     return;
   }
 
-  wrap.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Telegram ID</th>
-          <th>Status</th>
-          <th>Code Used</th>
-          <th>Messages</th>
-          <th>Last Seen</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${users.map(u => {
-          const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || '—';
-          const uname = u.username ? '@' + cleanAt(u.username) : null;
-          return `<tr>
-            <td>
-              <div style="font-weight:600">${esc(name)}</div>
-              ${uname ? `<div style="color:var(--text-muted);font-size:11px">${esc(uname)}</div>` : ''}
-            </td>
-            <td><code style="font-size:11px;color:var(--text-muted)">${u.chatId}</code></td>
-            <td>
-              ${u.banned
-                ? '<span class="badge badge-danger">🚫 Blocked</span>'
-                : u.activated
-                  ? '<span class="badge badge-success">✓ Active</span>'
-                  : '<span class="badge badge-warning">⏳ Pending</span>'}
-            </td>
-            <td>
-              ${u.activationCode
-                ? `<span class="code-tag" onclick="copy('${u.activationCode}')">${u.activationCode}</span>`
-                : '<span style="color:var(--text-muted)">—</span>'}
-            </td>
-            <td style="color:var(--text-muted)">${u.messageCount || 0}</td>
-            <td style="color:var(--text-muted);font-size:11px;white-space:nowrap">${fmt(u.lastSeen)}</td>
-            <td>
-              ${u.banned
-                ? `<button class="btn btn-success btn-sm" onclick="unbanUser('${u.chatId}', '${esc(name)}')">Unblock</button>`
-                : `<button class="btn btn-danger btn-sm" onclick="banUser('${u.chatId}', '${esc(name)}')">Block</button>`}
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
-  `;
+  wrap.className = 'list-wrap';
+  wrap.innerHTML = `<div class="item-cards">${users.map(u => {
+    const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || '—';
+    const uname = u.username ? '@' + cleanAt(u.username) : '';
+    const status = u.banned
+      ? '<span class="badge badge-danger">🚫 Blocked</span>'
+      : u.activated
+        ? '<span class="badge badge-success">✓ Active</span>'
+        : '<span class="badge badge-warning">⏳ Pending</span>';
+    const codeCell = u.activationCode
+      ? `<span class="code-tag" onclick="copy('${u.activationCode}')">${u.activationCode}</span>`
+      : '—';
+    const nameArg = JSON.stringify(name);
+    const actionBtn = u.banned
+      ? `<button class="btn btn-success btn-sm" onclick="unbanUser('${u.chatId}', ${nameArg})">Unblock user</button>`
+      : `<button class="btn btn-danger btn-sm" onclick="banUser('${u.chatId}', ${nameArg})">Block user</button>`;
+    return `
+      <div class="item-card">
+        <div class="item-card-top">
+          <div>
+            <div class="item-card-title">${esc(name)}</div>
+            ${uname ? `<div class="item-card-sub">${esc(uname)}</div>` : ''}
+          </div>
+          ${status}
+        </div>
+        <div class="item-card-rows">
+          <div class="item-card-row"><span class="label">Telegram ID</span><span class="value"><code style="font-size:12px">${u.chatId}</code></span></div>
+          <div class="item-card-row"><span class="label">Code used</span><span class="value">${codeCell}</span></div>
+          <div class="item-card-row"><span class="label">Messages</span><span class="value">${u.messageCount || 0}</span></div>
+          <div class="item-card-row"><span class="label">Last seen</span><span class="value">${fmtShort(u.lastSeen)}</span></div>
+        </div>
+        <div class="item-card-actions">${actionBtn}</div>
+      </div>`;
+  }).join('')}</div>`;
 }
 
 async function banUser(id, name) {
@@ -781,11 +1023,11 @@ async function unbanUser(id, name) {
 function cleanAt(s) { return s ? s.replace(/^@/, '') : s; }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-function fmt(iso) {
+function fmtShort(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })
-       + '<br>' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    + ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
 function copy(text) {

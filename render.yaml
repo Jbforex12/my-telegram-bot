@@ -5,3 +5,10 @@ services:
     buildCommand: npm install
     startCommand: node bot.js
     healthCheckPath: /health
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: bot-data
+      mountPath: /var/data
+      sizeGB: 1
