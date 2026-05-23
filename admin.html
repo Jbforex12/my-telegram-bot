@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366f1">
+<meta name="theme-color" content="#2563eb">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PP Admin">
 <link rel="manifest" href="/manifest.json">
@@ -12,17 +12,20 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0f1117;
-  --surface: #1a1f2e;
-  --surface2: #242938;
-  --border: #2d3248;
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
+  --bg: #0c1220;
+  --surface: #111b2e;
+  --surface2: #1a2740;
+  --border: #243352;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-light: #3b82f6;
+  --accent-soft: rgba(37, 99, 235, 0.14);
+  --accent-muted: rgba(37, 99, 235, 0.08);
   --success: #22c55e;
   --danger: #ef4444;
   --warning: #f59e0b;
-  --text: #e2e8f0;
-  --text-muted: #8892a4;
+  --text: #e8eef7;
+  --text-muted: #8ba3c7;
   --radius: 10px;
 }
 
@@ -52,10 +55,12 @@ body {
 .login-card {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
   border-radius: 16px;
   padding: 40px;
   width: 100%;
   max-width: 420px;
+  box-shadow: 0 8px 32px rgba(37, 99, 235, 0.12);
 }
 .login-logo { font-size: 32px; margin-bottom: 12px; }
 .login-card h1 { font-size: 22px; margin-bottom: 4px; }
@@ -167,7 +172,7 @@ input[type="number"] { -moz-appearance: textfield; }
   user-select: none;
 }
 .nav-item:hover { color: var(--text); background: var(--surface2); }
-.nav-item.active { color: var(--accent); background: rgba(99,102,241,0.08); border-right-color: var(--accent); }
+.nav-item.active { color: var(--accent-light); background: var(--accent-muted); border-right-color: var(--accent); }
 .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
 
 .sidebar-footer {
@@ -392,7 +397,7 @@ input[type="number"] { -moz-appearance: textfield; }
   cursor: pointer;
   transition: all 0.15s;
 }
-.gen-chip:hover { border-color: var(--accent); background: rgba(99,102,241,0.08); }
+.gen-chip:hover { border-color: var(--accent); background: var(--accent-muted); }
 .gen-chip.copied { border-color: var(--success); color: var(--success); }
 .copy-all-btn { margin-top: 12px; }
 
@@ -559,8 +564,8 @@ input[type="number"] { -moz-appearance: textfield; }
     -webkit-tap-highlight-color: transparent;
   }
   .mobile-nav button.active {
-    color: var(--accent);
-    background: rgba(99,102,241,0.15);
+    color: var(--accent-light);
+    background: var(--accent-soft);
   }
   .mobile-nav button span:first-child { font-size: 22px; line-height: 1; }
 }

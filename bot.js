@@ -707,8 +707,8 @@ const server = http.createServer(async (req, res) => {
       description: "Manage activation codes and users",
       start_url: "/admin",
       display: "standalone",
-      background_color: "#0f1117",
-      theme_color: "#6366f1",
+      background_color: "#0c1220",
+      theme_color: "#2563eb",
       orientation: "portrait"
     });
   }
