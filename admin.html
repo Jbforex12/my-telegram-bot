@@ -801,8 +801,12 @@ function isLocalHost() {
   return h === 'localhost' || h === '127.0.0.1';
 }
 
+function isOnRender() {
+  return window.location.hostname.endsWith('.onrender.com');
+}
+
 function getServerUrl() {
-  if (!isLocalHost()) return window.location.origin;
+  if (isOnRender()) return window.location.origin;
   return document.getElementById('inp-url').value.trim().replace(/\/$/, '');
 }
 
@@ -825,14 +829,15 @@ function getSavedKey() {
 async function init() {
   const savedUrl = localStorage.getItem('pp_url') || '';
   const savedKey = getSavedKey();
-  const onServer = !isLocalHost();
+  const onRender = isOnRender();
 
-  document.getElementById('inp-url').value = onServer ? window.location.origin : (savedUrl || window.location.origin);
-
-  if (onServer) {
+  if (onRender) {
+    document.getElementById('inp-url').value = window.location.origin;
     document.getElementById('url-field').style.display = 'none';
     document.getElementById('login-subtitle').textContent =
       'You are on your live admin site. Enter your API key to continue.';
+  } else {
+    document.getElementById('inp-url').value = savedUrl || '';
   }
 
   if (savedKey) document.getElementById('inp-key').value = savedKey;
@@ -849,7 +854,7 @@ async function init() {
     if (e.target === document.getElementById('modal-overlay')) modalCancel();
   });
 
-  if (savedKey && (onServer || savedUrl)) {
+  if (savedKey && (onRender || savedUrl)) {
     await doLogin(true);
   }
 }
