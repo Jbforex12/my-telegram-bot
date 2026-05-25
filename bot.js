@@ -53,6 +53,8 @@ const MAX_IMAGES_PER_USER_PER_DAY = 5;
 const MAX_FILES_PER_USER_PER_DAY = 8;
 const SUPPORTED_FILE_FORMATS = ["pdf", "docx", "txt", "md", "xlsx", "csv", "html"];
 const POLLINATIONS_MIN_GAP_MS = 16000; // free tier ~1 request per 15s
+const IMAGE_GEN_MODEL = env("IMAGE_GEN_MODEL") || "turbo";
+const IMAGE_GEN_MAX_ATTEMPTS = 2;
 
 function hasImageGen() {
   return env("IMAGE_GEN") !== "false";
@@ -576,24 +578,69 @@ function recordImageGen(chatId) {
   imageGenDaily[chatId].count += 1;
 }
 
-async function craftImagePrompt(userRequest) {
+async function parseImageRequest(userRequest) {
   const response = await groq.chat.completions.create({
     model: TEXT_MODEL,
-    max_tokens: 400,
+    max_tokens: 500,
+    response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
         content:
-          "You write prompts for AI educational illustrations for Pathway Prep learners. " +
-          "Output ONLY the image prompt text — no quotes, no preamble. " +
-          "Style: clear friendly educational diagram or infographic, labeled parts, simple icons, clean layout, " +
-          "high contrast, professional learning material. No copyrighted characters or brand logos. " +
-          "Minimize embedded text in the image (icons and arrows preferred)."
+          "You interpret what illustration a Pathway Prep user wants. Reply with JSON only:\n" +
+          '{"subject":"exact topic in 5-15 words","visual_type":"diagram|infographic|process_flow|scene|comparison_chart",' +
+          '"elements":["3-6 concrete things that MUST appear visually"],"avoid":["things that must NOT appear"]}\n' +
+          "Rules: Stay faithful to the user message. If they ask about CVs, interviews, or careers — show that, not random animals. " +
+          "If the request is vague, pick the most likely career-learning visual. Never invent unrelated creatures or surreal subjects."
       },
       { role: "user", content: userRequest }
     ]
   });
-  return response.choices[0].message.content.trim().slice(0, 4000);
+  try {
+    return JSON.parse(response.choices[0].message.content);
+  } catch {
+    return {
+      subject: userRequest.slice(0, 120),
+      visual_type: "infographic",
+      elements: [userRequest.slice(0, 80)],
+      avoid: ["surreal art", "random animals", "distorted bodies", "gore", "wireframe overlays"]
+    };
+  }
+}
+
+function buildStrictImagePrompt(brief) {
+  const elements = Array.isArray(brief.elements) ? brief.elements.join(", ") : "";
+  const avoidList = [
+    "surreal",
+    "random animals",
+    "mutant creatures",
+    "distorted anatomy",
+    "gore",
+    "blood",
+    "blueprint mesh",
+    "wireframe overlay",
+    "circuit lines on animals",
+    "unrelated subject matter",
+    ...(Array.isArray(brief.avoid) ? brief.avoid : [])
+  ];
+  const avoid = [...new Set(avoidList)].join(", ");
+  return [
+    "Professional flat educational infographic illustration for adult learners",
+    `Main topic: ${brief.subject || "career skills"}`,
+    `Layout type: ${brief.visual_type || "diagram"}`,
+    elements ? `The image must clearly show: ${elements}` : "",
+    "Style: clean white background, simple vector icons, soft blue and grey accents, clear composition, textbook quality, no clutter",
+    "No photorealistic wildlife unless the topic explicitly requires an animal",
+    `Strictly avoid: ${avoid}`
+  ]
+    .filter(Boolean)
+    .join(". ")
+    .slice(0, 3800);
+}
+
+async function craftImagePrompt(userRequest) {
+  const brief = await parseImageRequest(userRequest);
+  return { prompt: buildStrictImagePrompt(brief), brief };
 }
 
 async function waitForPollinationsSlot() {
@@ -603,11 +650,17 @@ async function waitForPollinationsSlot() {
   lastPollinationsAt = Date.now();
 }
 
-async function generateImageBuffer(prompt) {
+async function generateImageBuffer(prompt, seed) {
   await waitForPollinationsSlot();
-  const url =
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    "?width=1024&height=1024&model=flux&nologo=true&enhance=true";
+  const params = new URLSearchParams({
+    width: "1024",
+    height: "768",
+    model: IMAGE_GEN_MODEL,
+    nologo: "true",
+    enhance: "false"
+  });
+  if (seed != null) params.set("seed", String(seed));
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params}`;
   const res = await fetch(url, {
     headers: { "User-Agent": "PathwayPrepBot/1.0" },
     signal: AbortSignal.timeout(120000)
@@ -619,6 +672,82 @@ async function generateImageBuffer(prompt) {
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < 2000) throw new Error("Invalid or empty image response");
   return buf;
+}
+
+async function validateImageMatchesRequest(imageBuffer, userRequest, brief) {
+  const b64 = imageBuffer.toString("base64");
+  const response = await groq.chat.completions.create({
+    model: VISION_MODEL,
+    max_tokens: 200,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+          {
+            type: "text",
+            text:
+              `The user asked for an illustration about: "${userRequest}".\n` +
+              `Expected topic: ${brief.subject}\n` +
+              `Expected elements: ${(brief.elements || []).join(", ")}\n\n` +
+              'Does this image clearly match that request for education (not random/surreal/off-topic)? Reply JSON only: {"ok":true} or {"ok":false,"problem":"short reason"}'
+          }
+        ]
+      }
+    ]
+  });
+  try {
+    return JSON.parse(response.choices[0].message.content);
+  } catch {
+    return { ok: true };
+  }
+}
+
+async function generateImageForRequest(userRequest) {
+  const { prompt: basePrompt, brief } = await craftImagePrompt(userRequest);
+  let lastBuffer = null;
+  let prompt = basePrompt;
+  const seed = Math.floor(Math.random() * 999999);
+
+  for (let attempt = 1; attempt <= IMAGE_GEN_MAX_ATTEMPTS; attempt++) {
+    lastBuffer = await generateImageBuffer(prompt, attempt === 1 ? seed : seed + attempt);
+    const check = await validateImageMatchesRequest(lastBuffer, userRequest, brief);
+    if (check.ok) return { buffer: lastBuffer, brief, prompt };
+    if (attempt < IMAGE_GEN_MAX_ATTEMPTS) {
+      console.log(`Image retry ${attempt + 1}: ${check.problem || "off-topic"}`);
+      prompt =
+        basePrompt +
+        `. IMPORTANT correction: previous attempt failed because ${check.problem || "off-topic"}. ` +
+        `Show ONLY: ${(brief.elements || []).join(", ")}. Topic: ${brief.subject}.`;
+    }
+  }
+  return { buffer: lastBuffer, brief, prompt };
+}
+
+async function describeGeneratedImage(imageBuffer, userRequest, brief) {
+  const b64 = imageBuffer.toString("base64");
+  const response = await groq.chat.completions.create({
+    model: VISION_MODEL,
+    max_tokens: 500,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+          {
+            type: "text",
+            text:
+              `The user asked for: "${userRequest}". I sent them this illustration about "${brief.subject}". ` +
+              "Describe what this image actually shows in 2–3 short paragraphs and how it helps them learn. " +
+              "Be accurate to what is in the image — do not invent animals or objects that are not there."
+          }
+        ]
+      }
+    ]
+  });
+  return formatReply(response.choices[0].message.content);
 }
 
 const fileGenDaily = {};
@@ -917,28 +1046,14 @@ async function handleImageGenerationRequest(chatId, userText) {
   const statusMsg = await bot.sendMessage(chatId, "Creating an educational illustration for you — this may take 20–45 seconds…");
 
   try {
-    const imagePrompt = await craftImagePrompt(userText);
-    const imageBuffer = await generateImageBuffer(imagePrompt);
+    const { buffer: imageBuffer, brief } = await generateImageForRequest(userText);
     recordImageGen(chatId);
 
     const history = getHistory(chatId);
     history.push({ role: "user", content: userText });
 
-    const explanation = await groq.chat.completions.create({
-      model: TEXT_MODEL,
-      max_tokens: 600,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...history,
-        {
-          role: "user",
-          content:
-            "I just received an educational illustration you created for me. In 2–4 short paragraphs, explain what the image is meant to show and how it helps me understand the topic. Do not say you cannot create images."
-        }
-      ]
-    });
-    const caption = formatReply(explanation.choices[0].message.content);
-    history.push({ role: "assistant", content: `[Sent illustration] ${caption}` });
+    const caption = await describeGeneratedImage(imageBuffer, userText, brief);
+    history.push({ role: "assistant", content: `[Sent illustration: ${brief.subject}] ${caption}` });
     trimHistory(chatId);
 
     await bot.sendPhoto(chatId, imageBuffer, { caption: caption.slice(0, 1024) });
