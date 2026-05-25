@@ -26,6 +26,16 @@ In Railway → your service → **Variables**, set all of these (copy values fro
 
 Do **not** use placeholder values from `.env.example`.
 
+## Quick test (if 502 won't go away)
+
+In Railway → Settings → **Start command**, temporarily set:
+
+```
+node railway-health.js
+```
+
+Redeploy. If `https://telegram-bot-production-a46e.up.railway.app/health` then returns `{"status":"ok","mode":"health-only",...}`, your **networking is fine** and the full bot is crashing — open **Deploy Logs** for the real error, then set start command back to `npm start` and fix vars.
+
 ## Fix 502 "Application failed to respond"
 
 If variables are set but you still see 502:
