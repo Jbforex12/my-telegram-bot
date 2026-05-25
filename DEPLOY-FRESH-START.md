@@ -70,6 +70,7 @@ Your repo already includes `render.yaml` with a **persistent disk** for `users.j
    | `GROQ_API_KEY` | from `.env` |
    | `ADMIN_API_KEY` | from `.env` |
    | `ADMIN_CHAT_ID` | from `.env` |
+   | `OPENAI_API_KEY` | optional — enables generated illustrations (DALL-E) |
 
    Do **not** set `PORT` or `DATA_DIR` manually — `render.yaml` sets `DATA_DIR=/var/data`.
 

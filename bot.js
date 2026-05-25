@@ -49,6 +49,13 @@ const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const MAX_TOKENS = 2048;
 const MAX_HISTORY = 24;
 const MAX_DOC_CHARS = 14000;
+const MAX_IMAGES_PER_USER_PER_DAY = 5;
+const IMAGE_GEN_PLACEHOLDERS = ["your_openai_api_key_here", ""];
+
+function hasImageGen() {
+  const key = env("OPENAI_API_KEY");
+  return !!key && !IMAGE_GEN_PLACEHOLDERS.includes(key);
+}
 
 function requireEnv() {
   const placeholders = [
@@ -69,6 +76,8 @@ function requireEnv() {
     process.exit(1);
   }
   console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
+  if (hasImageGen()) console.log("Image generation: enabled (OpenAI DALL-E)");
+  else console.log("Image generation: disabled (set OPENAI_API_KEY in .env to enable)");
 }
 requireEnv();
 
@@ -307,7 +316,7 @@ function welcomeMessage() {
   return (
     `Welcome to ${BOT_NAME} 👋\n\n` +
     `I'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\n` +
-    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, and reviewing documents or images you send me.\n\n` +
+    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, reviewing documents or images you send me, and creating illustrations when you need a visual to understand a concept.\n\n` +
     `To get started, please enter your activation code (for example: JB-XXXXXX).\n\n` +
     `If you don't have one, contact ${SUPPORT_EMAIL} to get access.`
   );
@@ -317,7 +326,7 @@ function activationSuccessMessage() {
   return (
     `You're in! Welcome to ${BOT_NAME} 🎉\n\n` +
     `I'm your personal learning and career assistant for Pathway Prep.\n\n` +
-    `You can ask me questions, send images, or upload files like PDFs, Word documents, and spreadsheets — I'll read them and help based on our conversation.\n\n` +
+    `You can ask me questions, request an illustration (e.g. "generate an image explaining…"), send photos, or upload PDFs and Word files — I'll help based on our conversation.\n\n` +
     `How can I help you today?`
   );
 }
@@ -448,6 +457,7 @@ YOUR INTELLIGENCE AND TEACHING ABILITY:
 - Adapt your depth to the user — if they seem advanced, go deeper; if they seem new to a topic, start from the basics
 - You can explain complex ideas in plain everyday language without dumbing it down
 - When the user sends an image or document, analyse it carefully in the context of the ongoing conversation. Give thorough, specific, and actionable feedback — not vague summaries
+- When the user asks for a generated illustration or diagram to understand a concept, the system may create one for them — after it is sent, briefly explain what it shows and how it helps their learning
 - If a topic is outside Pathway Prep's scope or you genuinely don't know, say: "That's a great question — the support team would be best placed to help you with that. You can reach them at ${SUPPORT_EMAIL}"
 
 QUALITY OF ANSWERS — VERY IMPORTANT:
@@ -527,6 +537,137 @@ async function chatText(chatId, userText) {
   history.push({ role: "assistant", content: reply });
   trimHistory(chatId);
   return reply;
+}
+
+const imageGenDaily = {};
+
+function userWantsGeneratedImage(text) {
+  const t = text.toLowerCase();
+  const patterns = [
+    /\b(generate|create|make|draw|produce|design|build)\s+(an?\s+)?(image|picture|diagram|illustration|visual|infographic|chart)/,
+    /\b(show|give)\s+me\s+(an?\s+)?(image|picture|diagram|illustration|visual)/,
+    /\b(can you|could you|please)\s+(generate|create|make|draw|show|give).{0,40}(image|picture|diagram|illustration|visual)/,
+    /\b(visuali[sz]e|illustrate)\b/,
+    /\bexplain\b.{0,50}\b(with\s+)?(an?\s+)?(image|diagram|illustration|picture)\b/,
+    /\b(image|diagram|illustration|picture)\s+(of|showing|for|about|explaining)\b/,
+    /\bhelp me understand\b.{0,40}\b(visually|with a (picture|diagram|image))\b/
+  ];
+  return patterns.some((p) => p.test(t));
+}
+
+function imageGenLimitReached(chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const entry = imageGenDaily[chatId];
+  if (!entry || entry.date !== today) return false;
+  return entry.count >= MAX_IMAGES_PER_USER_PER_DAY;
+}
+
+function recordImageGen(chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!imageGenDaily[chatId] || imageGenDaily[chatId].date !== today) {
+    imageGenDaily[chatId] = { date: today, count: 0 };
+  }
+  imageGenDaily[chatId].count += 1;
+}
+
+async function craftImagePrompt(userRequest) {
+  const response = await groq.chat.completions.create({
+    model: TEXT_MODEL,
+    max_tokens: 400,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write prompts for DALL-E 3 educational illustrations for Pathway Prep learners. " +
+          "Output ONLY the image prompt text — no quotes, no preamble. " +
+          "Style: clear friendly educational diagram or infographic, labeled parts, simple icons, clean layout, " +
+          "high contrast, professional learning material. No copyrighted characters or brand logos. " +
+          "Minimize embedded text in the image (icons and arrows preferred)."
+      },
+      { role: "user", content: userRequest }
+    ]
+  });
+  return response.choices[0].message.content.trim().slice(0, 4000);
+}
+
+async function generateImageBuffer(prompt) {
+  const apiKey = env("OPENAI_API_KEY");
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "dall-e-3",
+      prompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+      response_format: "b64_json"
+    })
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Image API ${res.status}: ${errBody.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return Buffer.from(data.data[0].b64_json, "base64");
+}
+
+async function handleImageGenerationRequest(chatId, userText) {
+  if (!hasImageGen()) {
+    return bot.sendMessage(
+      chatId,
+      "Illustrations aren't enabled on this bot yet. Ask the Pathway Prep team to add an OpenAI API key (OPENAI_API_KEY)."
+    );
+  }
+  if (imageGenLimitReached(chatId)) {
+    return bot.sendMessage(
+      chatId,
+      `You've reached today's limit of ${MAX_IMAGES_PER_USER_PER_DAY} generated illustrations. Try again tomorrow, or ask in text — I'm still here to help.`
+    );
+  }
+
+  await bot.sendChatAction(chatId, "upload_photo");
+  const statusMsg = await bot.sendMessage(chatId, "Creating an educational illustration for you — this usually takes 15–30 seconds…");
+
+  try {
+    const dallePrompt = await craftImagePrompt(userText);
+    const imageBuffer = await generateImageBuffer(dallePrompt);
+    recordImageGen(chatId);
+
+    const history = getHistory(chatId);
+    history.push({ role: "user", content: userText });
+
+    const explanation = await groq.chat.completions.create({
+      model: TEXT_MODEL,
+      max_tokens: 600,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...history,
+        {
+          role: "user",
+          content:
+            "I just received an educational illustration you created for me. In 2–4 short paragraphs, explain what the image is meant to show and how it helps me understand the topic. Do not say you cannot create images."
+        }
+      ]
+    });
+    const caption = formatReply(explanation.choices[0].message.content);
+    history.push({ role: "assistant", content: `[Sent illustration] ${caption}` });
+    trimHistory(chatId);
+
+    await bot.sendPhoto(chatId, imageBuffer, { caption: caption.slice(0, 1024) });
+    await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+  } catch (err) {
+    console.error("Image generation error:", err.message);
+    await bot.editMessageText(
+      "I couldn't create that illustration right now — please try again in a moment or describe what you need in words.",
+      { chat_id: chatId, message_id: statusMsg.message_id }
+    ).catch(() => {
+      bot.sendMessage(chatId, "I couldn't create that illustration right now — please try again in a moment.");
+    });
+  }
 }
 
 async function chatVision(chatId, imageUrl, userText) {
@@ -635,6 +776,19 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(chatId, welcomeMessage());
 });
 
+bot.onText(/\/image(?:@\w+)?(?:\s+([\s\S]+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!gateAccess(msg)) return;
+  const topic = (match[1] || "").trim();
+  if (!topic) {
+    return bot.sendMessage(
+      chatId,
+      "Usage: /image [topic to illustrate]\n\nExample:\n/image how the STAR method works in interviews"
+    );
+  }
+  await handleImageGenerationRequest(chatId, `Generate an educational illustration explaining: ${topic}`);
+});
+
 bot.onText(/\/forget/, (msg) => {
   const chatId = msg.chat.id;
   conversations[chatId] = [];
@@ -736,9 +890,12 @@ bot.on("message", async (msg) => {
     return handleActivationAttempt(msg, text);
   }
 
-  bot.sendChatAction(chatId, "typing");
-
   try {
+    if (userWantsGeneratedImage(text)) {
+      return handleImageGenerationRequest(chatId, text);
+    }
+
+    bot.sendChatAction(chatId, "typing");
     const intro = buildIntro(chatId);
     const reply = await chatText(chatId, intro + text);
     await sendLongMessage(chatId, reply);
