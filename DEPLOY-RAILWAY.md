@@ -26,12 +26,22 @@ In Railway → your service → **Variables**, set all of these (copy values fro
 
 Do **not** use placeholder values from `.env.example`.
 
-## After setting variables
+## Fix 502 "Application failed to respond"
 
-1. Click **Redeploy** in Railway.
-2. Open **Deploy Logs** — you should see: `✅ Pathway Prep Bot is running!`
-3. Visit `https://telegram-bot-production-a46e.up.railway.app/health` — should show `{"status":"ok",...}`
-4. Open `/admin` and sign in with your `ADMIN_API_KEY`.
+If variables are set but you still see 502:
+
+1. **Networking → Public domain → Target port** must be **automatic** (or match the `PORT` Railway injects — often `8080`). If target port is `3001` but the app listens on `8080`, every request returns 502.
+2. Open **Deploy Logs** (not Build Logs). Look for:
+   - `Env OK — PORT=...` (good)
+   - `❌ Bot cannot start — missing environment variables` (fix vars, redeploy)
+   - `✅ HTTP server listening on 0.0.0.0:...` (good)
+3. Click **Redeploy** after any variable change.
+4. **Stop local bot** on your PC (`START-BOT.ps1` window) while Railway runs — two instances cause Telegram conflicts.
+
+## After a successful deploy
+
+1. Visit `https://telegram-bot-production-a46e.up.railway.app/health` — should show `{"status":"ok",...}`
+2. Open `/admin` and sign in with your `ADMIN_API_KEY`.
 
 ## Local development
 

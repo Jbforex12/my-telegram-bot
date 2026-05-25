@@ -7,12 +7,20 @@ const http = require("http");
 const https = require("https");
 require("dotenv").config();
 
+function env(name) {
+  let v = (process.env[name] || "").trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
 // ─── Config ────────────────────────────────────────────────────────────────
 const BOT_NAME = "Pathway Prep Assistant";
 const SUPPORT_EMAIL = "pathway.prep.programme@gmail.com";
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? String(process.env.ADMIN_CHAT_ID) : null;
-const ADMIN_API_KEY = (process.env.ADMIN_API_KEY || "change-this-key").trim();
-const PORT = process.env.PORT || 3001;
+const ADMIN_CHAT_ID = env("ADMIN_CHAT_ID") || null;
+const ADMIN_API_KEY = env("ADMIN_API_KEY") || "change-this-key";
+const PORT = Number(process.env.PORT) || 3001;
 
 function resolveDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
@@ -50,17 +58,17 @@ function requireEnv() {
     "change-this-to-a-strong-secret-key"
   ];
   const missing = [];
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const groqKey = process.env.GROQ_API_KEY;
+  const token = env("TELEGRAM_BOT_TOKEN");
+  const groqKey = env("GROQ_API_KEY");
   if (!token || placeholders.includes(token)) missing.push("TELEGRAM_BOT_TOKEN");
   if (!groqKey || placeholders.includes(groqKey)) missing.push("GROQ_API_KEY");
   if (missing.length) {
     console.error("\n❌ Bot cannot start — missing environment variables:\n");
     missing.forEach((key) => console.error(`   • ${key}`));
-    console.error("\nEdit the .env file in the project folder and add your real API keys.");
-    console.error("(Copy from .env.example if .env does not exist yet.)\n");
+    console.error("\nSet these in Railway → Variables (no extra quotes), then Redeploy.\n");
     process.exit(1);
   }
+  console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
 }
 requireEnv();
 
@@ -413,11 +421,14 @@ async function extractDocumentText(fileName, buffer) {
 }
 
 // ─── Telegram bot ──────────────────────────────────────────────────────────
-const token = process.env.TELEGRAM_BOT_TOKEN;
-console.log("TOKEN check — first 10 chars:", token ? token.substring(0, 10) : "MISSING", "| length:", token ? token.length : 0);
+const token = env("TELEGRAM_BOT_TOKEN");
+let bot;
+let groq;
 
-const bot = new TelegramBot(token, { polling: true });
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+function initTelegramBot() {
+  console.log("Starting Telegram polling…");
+  bot = new TelegramBot(token, { polling: true });
+  groq = new Groq({ apiKey: env("GROQ_API_KEY") });
 
 const conversations = {};
 const firstMessage = {};
@@ -815,6 +826,8 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.message);
 });
 
+} // initTelegramBot
+
 // ─── Admin HTTP API ─────────────────────────────────────────────────────────
 function sendJSON(res, status, data) {
   res.writeHead(status, {
@@ -986,8 +999,10 @@ const PUBLIC_URL =
   (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
 
 server.listen(PORT, HOST, () => {
+  initTelegramBot();
   const codeCount = Object.keys(loadCodes().codes).length;
   const userCount = Object.keys(loadUsers().users).length;
+  console.log(`✅ HTTP server listening on ${HOST}:${PORT}`);
   console.log(`✅ Pathway Prep Bot is running!`);
   console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
   if (PUBLIC_URL) console.log(`✅ Public admin: ${PUBLIC_URL}/admin`);

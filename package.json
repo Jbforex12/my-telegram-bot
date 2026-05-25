@@ -2,6 +2,9 @@
   "name": "my-telegram-bot",
   "version": "1.0.0",
   "main": "bot.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node bot.js"
   },
