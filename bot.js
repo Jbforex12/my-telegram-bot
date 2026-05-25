@@ -50,7 +50,8 @@ const MAX_TOKENS = 2048;
 const MAX_HISTORY = 24;
 const MAX_DOC_CHARS = 14000;
 const MAX_IMAGES_PER_USER_PER_DAY = 5;
-const MAX_PDFS_PER_USER_PER_DAY = 5;
+const MAX_FILES_PER_USER_PER_DAY = 8;
+const SUPPORTED_FILE_FORMATS = ["pdf", "docx", "txt", "md", "xlsx", "csv", "html"];
 const POLLINATIONS_MIN_GAP_MS = 16000; // free tier ~1 request per 15s
 
 function hasImageGen() {
@@ -80,7 +81,7 @@ function requireEnv() {
   console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
   if (hasImageGen()) console.log("Image generation: enabled (Pollinations.ai — free, no API key)");
   else console.log("Image generation: disabled (IMAGE_GEN=false)");
-  console.log("PDF generation: enabled");
+  console.log(`File export: ${SUPPORTED_FILE_FORMATS.join(", ")}`);
 }
 requireEnv();
 
@@ -319,7 +320,7 @@ function welcomeMessage() {
   return (
     `Welcome to ${BOT_NAME} 👋\n\n` +
     `I'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\n` +
-    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, and I can send you real PDF files (CVs, cover letters) and generated images when you need them.\n\n` +
+    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, and I can send you real files (PDF, Word, Excel, text, and more) plus images when you need them.\n\n` +
     `To get started, please enter your activation code (for example: JB-XXXXXX).\n\n` +
     `If you don't have one, contact ${SUPPORT_EMAIL} to get access.`
   );
@@ -329,7 +330,7 @@ function activationSuccessMessage() {
   return (
     `You're in! Welcome to ${BOT_NAME} 🎉\n\n` +
     `I'm your personal learning and career assistant for Pathway Prep.\n\n` +
-    `You can ask questions, request a PDF (e.g. "give me a sample CV as a PDF"), request an image (e.g. "generate an image explaining…"), or send me files to review.\n\n` +
+    `You can ask questions, request a file in any format (e.g. "CV as a Word document", "sample CV as PDF"), request an image, or send me files to review.\n\n` +
     `How can I help you today?`
   );
 }
@@ -461,8 +462,8 @@ YOUR INTELLIGENCE AND TEACHING ABILITY:
 - You can explain complex ideas in plain everyday language without dumbing it down
 - When the user sends an image or document, analyse it carefully in the context of the ongoing conversation. Give thorough, specific, and actionable feedback — not vague summaries
 - When the user asks for a generated illustration or diagram to understand a concept, the system may create one for them — after it is sent, briefly explain what it shows and how it helps their learning
-- When the user asks for a PDF file (CV, resume, cover letter, study guide), the system generates and sends a real PDF in the chat — never tell them to copy text into Word or that you cannot create PDFs
-- FILE CREATION — CRITICAL: You CAN deliver PDF documents and illustration images directly in Telegram. Never say you are unable to generate PDFs, images, or files. For a PDF, users can say "give me a CV as a PDF" or use /pdf. For an image, say "generate an image explaining…" or use /image
+- When the user asks for a file (PDF, Word, Excel, text, etc.), the system generates and sends a real downloadable file — never tell them to copy text into Word or that you cannot create files
+- FILE CREATION — CRITICAL: You CAN deliver files in these formats: PDF, Word (docx), Excel (xlsx), CSV, plain text (txt), Markdown (md), HTML, plus generated images. Never say you cannot create files. Examples: "CV as a Word document", "give me a PDF resume", "create an Excel file with…", /file docx [topic], /file pdf [topic], /image [topic]
 - If a topic is outside Pathway Prep's scope or you genuinely don't know, say: "That's a great question — the support team would be best placed to help you with that. You can reach them at ${SUPPORT_EMAIL}"
 
 QUALITY OF ANSWERS — VERY IMPORTANT:
@@ -620,68 +621,121 @@ async function generateImageBuffer(prompt) {
   return buf;
 }
 
-const pdfGenDaily = {};
+const fileGenDaily = {};
 
-function userWantsGeneratedPdf(text) {
+function userWantsGeneratedFile(text) {
   const t = text.toLowerCase();
+  if (detectRequestedFileFormat(text)) return true;
   const patterns = [
-    /\b(pdf|\.pdf)\b/,
-    /\b(as|in|into)\s+(a\s+)?pdf\b/,
-    /\b(generate|create|make|write|send|give|export|download|produce)\b.{0,40}\b(pdf|document|file)\b/,
-    /\b(cv|resume|curriculum vitae|cover letter)\b.{0,40}\b(pdf|file|document)\b/,
-    /\b(pdf|file|document)\b.{0,40}\b(cv|resume|cover letter)\b/,
+    /\b(pdf|docx|\.docx|\.doc|word|excel|xlsx|\.xlsx|csv|\.csv|\.txt|\.md|\.html)\b/,
+    /\b(word document|microsoft word|ms word|spreadsheet)\b/,
+    /\b(as|in|into)\s+(a\s+)?(pdf|word|docx|doc|excel|file|document)\b/,
+    /\b(generate|create|make|write|send|give|export|download|produce|build)\b.{0,50}\b(pdf|file|document|docx|word|excel)\b/,
+    /\b(cv|resume|curriculum vitae|cover letter)\b.{0,40}\b(pdf|file|document|word|docx)\b/,
+    /\b(file|document)\b.{0,40}\b(cv|resume|cover letter)\b/,
     /\bgive me\b.{0,50}\b(cv|resume)\b/
   ];
   return patterns.some((p) => p.test(t));
 }
 
-function pdfGenLimitReached(chatId) {
-  const today = new Date().toISOString().slice(0, 10);
-  const entry = pdfGenDaily[chatId];
-  if (!entry || entry.date !== today) return false;
-  return entry.count >= MAX_PDFS_PER_USER_PER_DAY;
-}
-
-function recordPdfGen(chatId) {
-  const today = new Date().toISOString().slice(0, 10);
-  if (!pdfGenDaily[chatId] || pdfGenDaily[chatId].date !== today) {
-    pdfGenDaily[chatId] = { date: today, count: 0 };
+function detectRequestedFileFormat(text) {
+  const t = text.toLowerCase();
+  const rules = [
+    [/\b(docx|\.docx|word document|microsoft word|ms word|as word|in word|word format|word file)\b/, "docx"],
+    [/\b\.doc\b|as doc\b|in doc\b/, "docx"],
+    [/\b(pdf|\.pdf|pdf format|pdf form|as pdf|in pdf)\b/, "pdf"],
+    [/\b(xlsx|\.xlsx|excel file|excel format|spreadsheet|as excel|in excel)\b/, "xlsx"],
+    [/\b(csv|\.csv|csv file)\b/, "csv"],
+    [/\b(\.md|markdown file|as markdown)\b/, "md"],
+    [/\b(\.txt|text file|plain text file|as text file)\b/, "txt"],
+    [/\b(\.html|html file|as html)\b/, "html"]
+  ];
+  for (const [re, fmt] of rules) {
+    if (re.test(t)) return fmt;
   }
-  pdfGenDaily[chatId].count += 1;
+  if (/\b(file|document)\b/.test(t) && /\bword\b/.test(t)) return "docx";
+  return null;
 }
 
-function pdfFilename(userText) {
+function defaultFileFormat(userText) {
   const t = userText.toLowerCase();
-  const stamp = Date.now();
-  if (/cover letter/.test(t)) return `Cover-Letter-${stamp}.pdf`;
-  if (/cv|resume|curriculum/.test(t)) return `CV-${stamp}.pdf`;
-  return `Pathway-Prep-Document-${stamp}.pdf`;
+  if (/excel|spreadsheet|table|rows|columns/.test(t)) return "xlsx";
+  if (/word|docx|\.doc\b/.test(t)) return "docx";
+  if (/cv|resume|cover letter/.test(t)) return "pdf";
+  return "docx";
 }
 
-async function craftDocumentForPdf(userRequest) {
+function fileGenLimitReached(chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const entry = fileGenDaily[chatId];
+  if (!entry || entry.date !== today) return false;
+  return entry.count >= MAX_FILES_PER_USER_PER_DAY;
+}
+
+function recordFileGen(chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!fileGenDaily[chatId] || fileGenDaily[chatId].date !== today) {
+    fileGenDaily[chatId] = { date: today, count: 0 };
+  }
+  fileGenDaily[chatId].count += 1;
+}
+
+function buildOutputFilename(userText, format) {
+  const stamp = Date.now();
+  const t = userText.toLowerCase();
+  let base = "Pathway-Prep-Document";
+  if (/cover letter/.test(t)) base = "Cover-Letter";
+  else if (/cv|resume|curriculum/.test(t)) base = "CV";
+  return `${base}-${stamp}.${format}`;
+}
+
+function documentTitleFromRequest(userRequest) {
+  const t = userRequest.toLowerCase();
+  if (/cv|resume|curriculum/.test(t)) return "Curriculum Vitae";
+  if (/cover letter/.test(t)) return "Cover Letter";
+  if (/spreadsheet|excel|table/.test(t)) return "Spreadsheet";
+  return "Document";
+}
+
+function isDocHeading(line) {
+  return (
+    line.length < 70 &&
+    (/^[A-Z][A-Z0-9\s&',.\-/]{2,}$/.test(line) ||
+      /^[A-Za-z][A-Za-z0-9\s]{0,50}:$/.test(line) ||
+      /^(curriculum vitae|resume|cover letter|professional summary|work experience|education|skills|contact|objective)$/i.test(line))
+  );
+}
+
+function cleanDocumentBody(raw) {
+  return raw
+    .trim()
+    .replace(/\*\*/g, "")
+    .replace(/^#+\s*/gm, "")
+    .replace(/^[-*]\s+/gm, "• ");
+}
+
+async function craftDocumentContent(userRequest, format) {
+  const tabular = format === "xlsx" || format === "csv";
+  const systemExtra = tabular
+    ? "Output tab-separated data: one row per line, columns separated by TAB characters. Include a header row. No markdown."
+    : "Output ONLY the document body in plain text. No markdown symbols (no *, #, -, **). " +
+      "Put section titles on their own line (e.g. EDUCATION, WORK EXPERIENCE). Use blank lines between sections. " +
+      "Use realistic fictional details when the user asks for sample or random information. " +
+      "CVs must include: full name at top, contact, professional summary, work experience with dates, education, skills.";
+
   const response = await groq.chat.completions.create({
     model: TEXT_MODEL,
     max_tokens: 3000,
     messages: [
       {
         role: "system",
-        content:
-          "You write complete professional documents for PDF export: CVs, resumes, cover letters, and study guides. " +
-          "Output ONLY the document body in plain text. No markdown symbols (no *, #, -, **). " +
-          "Put section titles on their own line (e.g. EDUCATION, WORK EXPERIENCE, or Contact:). " +
-          "Use blank lines between sections. Use realistic fictional details when the user asks for sample or random information. " +
-          "CVs must include: full name at top, contact, professional summary, work experience with dates, education, skills."
+        content: `You write complete professional documents for export as ${format.toUpperCase()}. ${systemExtra}`
       },
       { role: "user", content: userRequest }
     ]
   });
-  let body = response.choices[0].message.content.trim();
-  body = body.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-*]\s+/gm, "• ");
-  const t = userRequest.toLowerCase();
-  let title = "Document";
-  if (/cv|resume|curriculum/.test(t)) title = "Curriculum Vitae";
-  else if (/cover letter/.test(t)) title = "Cover Letter";
-  return { title, body };
+  const body = cleanDocumentBody(response.choices[0].message.content);
+  return { title: documentTitleFromRequest(userRequest), body };
 }
 
 function buildPdfBuffer(title, bodyText) {
@@ -703,12 +757,7 @@ function buildPdfBuffer(title, bodyText) {
         doc.moveDown(0.35);
         continue;
       }
-      const isHeading =
-        line.length < 70 &&
-        (/^[A-Z][A-Z0-9\s&',.\-/]{2,}$/.test(line) ||
-          /^[A-Za-z][A-Za-z0-9\s]{0,50}:$/.test(line) ||
-          /^(curriculum vitae|resume|cover letter|professional summary|work experience|education|skills|contact|objective)$/i.test(line));
-      if (isHeading) {
+      if (isDocHeading(line)) {
         doc.moveDown(0.4).font("Helvetica-Bold").fontSize(12).text(line);
         doc.font("Helvetica").fontSize(11);
       } else {
@@ -720,44 +769,135 @@ function buildPdfBuffer(title, bodyText) {
   });
 }
 
-async function handlePdfGenerationRequest(chatId, userText) {
-  if (pdfGenLimitReached(chatId)) {
+async function buildDocxBuffer(title, bodyText) {
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = require("docx");
+  const children = [
+    new Paragraph({ text: title, heading: HeadingLevel.HEADING_1, spacing: { after: 200 } })
+  ];
+  for (const rawLine of bodyText.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      children.push(new Paragraph({ text: "" }));
+      continue;
+    }
+    if (isDocHeading(line)) {
+      children.push(new Paragraph({ text: line, heading: HeadingLevel.HEADING_2, spacing: { before: 160, after: 80 } }));
+    } else {
+      children.push(new Paragraph({ children: [new TextRun(line)], spacing: { after: 80 } }));
+    }
+  }
+  const doc = new Document({ sections: [{ properties: {}, children }] });
+  return Packer.toBuffer(doc);
+}
+
+function buildXlsxBuffer(title, bodyText) {
+  const XLSX = require("xlsx");
+  const lines = bodyText.split("\n").map((l) => l.trim()).filter(Boolean);
+  const rows = [[title], []];
+  for (const line of lines) {
+    if (line.includes("\t")) rows.push(line.split("\t"));
+    else if (line.includes("|")) rows.push(line.split("|").map((c) => c.trim()));
+    else rows.push([line]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  return Buffer.from(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+}
+
+function buildCsvBuffer(bodyText) {
+  const lines = bodyText.split("\n").map((l) => l.trim()).filter(Boolean);
+  const csvLines = lines.map((line) => {
+    const cols = line.includes("\t") ? line.split("\t") : line.split("|").map((c) => c.trim());
+    return cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",");
+  });
+  return Buffer.from(csvLines.join("\n"), "utf8");
+}
+
+function buildHtmlBuffer(title, bodyText) {
+  const escaped = bodyText
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const html =
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>` +
+    `<style>body{font-family:Segoe UI,Arial,sans-serif;max-width:800px;margin:2em auto;line-height:1.5;color:#222}` +
+    `h1{text-align:center}pre{white-space:pre-wrap}</style></head><body>` +
+    `<h1>${title}</h1><pre>${escaped}</pre></body></html>`;
+  return Buffer.from(html, "utf8");
+}
+
+async function buildFileBuffer(format, title, bodyText) {
+  switch (format) {
+    case "pdf":
+      return buildPdfBuffer(title, bodyText);
+    case "docx":
+      return buildDocxBuffer(title, bodyText);
+    case "xlsx":
+      return buildXlsxBuffer(title, bodyText);
+    case "csv":
+      return buildCsvBuffer(bodyText);
+    case "html":
+      return buildHtmlBuffer(title, bodyText);
+    case "md":
+      return Buffer.from(`# ${title}\n\n${bodyText}`, "utf8");
+    case "txt":
+    default:
+      return Buffer.from(`${title}\n\n${bodyText}`, "utf8");
+  }
+}
+
+function formatLabel(format) {
+  const labels = { pdf: "PDF", docx: "Word", xlsx: "Excel", csv: "CSV", md: "Markdown", txt: "text", html: "HTML" };
+  return labels[format] || format.toUpperCase();
+}
+
+async function handleFileGenerationRequest(chatId, userText) {
+  const format = detectRequestedFileFormat(userText) || defaultFileFormat(userText);
+  if (!SUPPORTED_FILE_FORMATS.includes(format)) {
     return bot.sendMessage(
       chatId,
-      `You've reached today's limit of ${MAX_PDFS_PER_USER_PER_DAY} PDF documents. Try again tomorrow, or ask for help in text.`
+      `That file type isn't supported yet. I can create: ${SUPPORTED_FILE_FORMATS.join(", ")}.\n\nExample: "give me a CV as a Word document"`
+    );
+  }
+  if (fileGenLimitReached(chatId)) {
+    return bot.sendMessage(
+      chatId,
+      `You've reached today's limit of ${MAX_FILES_PER_USER_PER_DAY} generated files. Try again tomorrow.`
     );
   }
 
+  const label = formatLabel(format);
   await bot.sendChatAction(chatId, "upload_document");
-  const statusMsg = await bot.sendMessage(chatId, "Creating your PDF — this may take a moment…");
+  const statusMsg = await bot.sendMessage(chatId, `Creating your ${label} file — this may take a moment…`);
 
   try {
-    const { title, body } = await craftDocumentForPdf(userText);
-    const pdfBuffer = await buildPdfBuffer(title, body);
-    recordPdfGen(chatId);
+    const { title, body } = await craftDocumentContent(userText, format);
+    const fileBuffer = await buildFileBuffer(format, title, body);
+    recordFileGen(chatId);
 
+    const filename = buildOutputFilename(userText, format);
     const history = getHistory(chatId);
     history.push({ role: "user", content: userText });
     history.push({
       role: "assistant",
-      content: `[Sent PDF: ${pdfFilename(userText)}] Here is your ${title}. Open the file above — you can download and edit it as needed.`
+      content: `[Sent ${label} file: ${filename}] Here is your ${title}. Download and open the attachment above.`
     });
     trimHistory(chatId);
 
-    const filename = pdfFilename(userText);
-    await bot.sendDocument(chatId, pdfBuffer, { caption: `Your ${title} from Pathway Prep` }, { filename });
+    await bot.sendDocument(chatId, fileBuffer, { caption: `Your ${title} (${label}) from Pathway Prep` }, { filename });
     await bot.sendMessage(
       chatId,
-      "Your PDF is attached above. You can download it, share it, or open it in any PDF reader. Tell me if you'd like changes."
+      `Your ${label} file is attached above (${filename}). Open it on your phone or computer — tell me if you want edits or a different format (${SUPPORTED_FILE_FORMATS.join(", ")}).`
     );
     await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
   } catch (err) {
-    console.error("PDF generation error:", err.message);
+    console.error("File generation error:", err.message);
     await bot.editMessageText(
-      "I couldn't create that PDF right now — please try again in a moment.",
+      `I couldn't create that ${label} file right now — please try again in a moment.`,
       { chat_id: chatId, message_id: statusMsg.message_id }
     ).catch(() => {
-      bot.sendMessage(chatId, "I couldn't create that PDF right now — please try again in a moment.");
+      bot.sendMessage(chatId, `I couldn't create that ${label} file right now — please try again in a moment.`);
     });
   }
 }
@@ -920,17 +1060,29 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(chatId, welcomeMessage());
 });
 
+bot.onText(/\/file(?:@\w+)?(?:\s+(\w+))?(?:\s+([\s\S]+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!gateAccess(msg)) return;
+  const fmt = (match[1] || "").toLowerCase();
+  const topic = (match[2] || "").trim();
+  if (!fmt || !topic) {
+    return bot.sendMessage(
+      chatId,
+      "Usage: /file [format] [content]\n\nFormats: " + SUPPORTED_FILE_FORMATS.join(", ") +
+        "\n\nExamples:\n/file docx sample CV with random details\n/file pdf cover letter for a nurse\n/file xlsx interview prep checklist"
+    );
+  }
+  await handleFileGenerationRequest(chatId, `Create a ${fmt} file: ${topic}`);
+});
+
 bot.onText(/\/pdf(?:@\w+)?(?:\s+([\s\S]+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!gateAccess(msg)) return;
   const topic = (match[1] || "").trim();
   if (!topic) {
-    return bot.sendMessage(
-      chatId,
-      "Usage: /pdf [what to create]\n\nExample:\n/pdf sample CV for a marketing graduate with fictional details"
-    );
+    return bot.sendMessage(chatId, "Usage: /pdf [content]\n\nOr use: /file pdf [content]");
   }
-  await handlePdfGenerationRequest(chatId, `Create a PDF document: ${topic}`);
+  await handleFileGenerationRequest(chatId, `Create a PDF document: ${topic}`);
 });
 
 bot.onText(/\/image(?:@\w+)?(?:\s+([\s\S]+))?/, async (msg, match) => {
@@ -1048,8 +1200,8 @@ bot.on("message", async (msg) => {
   }
 
   try {
-    if (userWantsGeneratedPdf(text)) {
-      return handlePdfGenerationRequest(chatId, text);
+    if (userWantsGeneratedFile(text)) {
+      return handleFileGenerationRequest(chatId, text);
     }
     if (userWantsGeneratedImage(text)) {
       return handleImageGenerationRequest(chatId, text);
