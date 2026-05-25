@@ -609,8 +609,8 @@ input[type="number"] { -moz-appearance: textfield; }
 
     <div id="url-field">
       <label>Server URL</label>
-      <input type="text" id="inp-url" placeholder="https://your-bot.onrender.com" />
-      <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px">On your phone, use your deployed bot URL (not localhost).</p>
+      <input type="text" id="inp-url" placeholder="https://telegram-bot-production-a46e.up.railway.app" />
+      <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px">Use your Railway or Render URL — not a saved file from Downloads. Best: open <strong>/admin</strong> on your live bot URL.</p>
     </div>
 
     <label>Admin API Key</label>
@@ -805,8 +805,16 @@ function isOnRender() {
   return window.location.hostname.endsWith('.onrender.com');
 }
 
+function isOnRailway() {
+  return window.location.hostname.endsWith('.railway.app');
+}
+
+function isHostedAdmin() {
+  return isOnRender() || isOnRailway();
+}
+
 function getServerUrl() {
-  if (isOnRender()) return window.location.origin;
+  if (isHostedAdmin()) return window.location.origin;
   return document.getElementById('inp-url').value.trim().replace(/\/$/, '');
 }
 
@@ -829,15 +837,15 @@ function getSavedKey() {
 async function init() {
   const savedUrl = localStorage.getItem('pp_url') || '';
   const savedKey = getSavedKey();
-  const onRender = isOnRender();
+  const hosted = isHostedAdmin();
 
-  if (onRender) {
+  if (hosted) {
     document.getElementById('inp-url').value = window.location.origin;
     document.getElementById('url-field').style.display = 'none';
     document.getElementById('login-subtitle').textContent =
       'You are on your live admin site. Enter your API key to continue.';
   } else {
-    document.getElementById('inp-url').value = savedUrl || '';
+    document.getElementById('inp-url').value = savedUrl || 'https://telegram-bot-production-a46e.up.railway.app';
   }
 
   if (savedKey) document.getElementById('inp-key').value = savedKey;
@@ -854,7 +862,7 @@ async function init() {
     if (e.target === document.getElementById('modal-overlay')) modalCancel();
   });
 
-  if (savedKey && (onRender || savedUrl)) {
+  if (savedKey && (hosted || savedUrl)) {
     await doLogin(true);
   }
 }
@@ -867,7 +875,11 @@ async function doLogin(auto = false) {
   const key = document.getElementById('inp-key').value.trim();
   if (!auto) err.textContent = '';
   if (!url || !key) {
-    if (!auto) err.textContent = 'Please enter your Admin API Key.';
+    if (!auto) err.textContent = 'Please enter server URL and Admin API Key.';
+    return;
+  }
+  if (url.startsWith('file:')) {
+    if (!auto) err.textContent = 'Open admin from your bot URL (e.g. …/admin), not as a file on your PC.';
     return;
   }
 
@@ -878,7 +890,11 @@ async function doLogin(auto = false) {
   try {
     const r = await fetch(`${url}/api/stats`, { headers: { 'X-API-Key': key } });
     if (r.status === 401) {
-      if (!auto) err.textContent = 'Wrong API key — check your ADMIN_API_KEY.';
+      if (!auto) err.textContent = 'Wrong API key — must match ADMIN_API_KEY in Railway/Render (same as your .env).';
+      return;
+    }
+    if (r.status === 502 || r.status === 503) {
+      if (!auto) err.textContent = 'Bot server is offline (502). In Railway: check Deploy logs and set TELEGRAM_BOT_TOKEN, GROQ_API_KEY, ADMIN_API_KEY, then redeploy.';
       return;
     }
     if (!r.ok) {

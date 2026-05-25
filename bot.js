@@ -2,6 +2,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const Groq = require("groq-sdk");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const http = require("http");
 const https = require("https");
 require("dotenv").config();
@@ -10,9 +11,29 @@ require("dotenv").config();
 const BOT_NAME = "Pathway Prep Assistant";
 const SUPPORT_EMAIL = "pathway.prep.programme@gmail.com";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? String(process.env.ADMIN_CHAT_ID) : null;
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "change-this-key";
+const ADMIN_API_KEY = (process.env.ADMIN_API_KEY || "change-this-key").trim();
 const PORT = process.env.PORT || 3001;
-const DATA_DIR = process.env.DATA_DIR || __dirname;
+
+function resolveDataDir() {
+  if (process.env.DATA_DIR) return process.env.DATA_DIR;
+  const base = __dirname;
+  if (process.platform === "win32" && /\\System32\\|\\SysWOW64\\/i.test(base)) {
+    const dir = path.join(process.env.APPDATA || os.homedir(), "pathway-prep-bot");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    for (const name of ["users.json", "codes.json"]) {
+      const src = path.join(base, name);
+      const dst = path.join(dir, name);
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        try { fs.copyFileSync(src, dst); } catch { /* ignore */ }
+      }
+    }
+    console.log(`Using writable data folder: ${dir}`);
+    return dir;
+  }
+  return base;
+}
+
+const DATA_DIR = resolveDataDir();
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const CODES_FILE = path.join(DATA_DIR, "codes.json");
 const TEXT_MODEL = "llama-3.3-70b-versatile";
@@ -102,7 +123,9 @@ function saveJSON(file, data, opts = {}) {
     }
     const tmp = file + ".tmp";
     const backup = file + ".bak";
-    if (fs.existsSync(file)) fs.copyFileSync(file, backup);
+    if (fs.existsSync(file)) {
+      try { fs.copyFileSync(file, backup); } catch { /* backup optional if folder is read-only */ }
+    }
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
     fs.renameSync(tmp, file);
   } catch (e) {
@@ -849,10 +872,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && p === "/health") {
-    return sendJSON(res, 200, { status: "ok" });
+    return sendJSON(res, 200, {
+      status: "ok",
+      uptime: Math.floor(process.uptime()),
+      dataDir: DATA_DIR
+    });
   }
 
-  const apiKey = req.headers["x-api-key"];
+  const apiKey = (req.headers["x-api-key"] || "").trim();
   if (apiKey !== ADMIN_API_KEY) return sendJSON(res, 401, { error: "Unauthorized" });
 
   if (req.method === "GET" && p === "/api/stats") {
@@ -953,17 +980,22 @@ const server = http.createServer(async (req, res) => {
   return sendJSON(res, 404, { error: "Not found" });
 });
 
-server.listen(PORT, () => {
+const HOST = process.env.HOST || "0.0.0.0";
+const PUBLIC_URL =
+  process.env.RENDER_EXTERNAL_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+
+server.listen(PORT, HOST, () => {
   const codeCount = Object.keys(loadCodes().codes).length;
   const userCount = Object.keys(loadUsers().users).length;
   console.log(`✅ Pathway Prep Bot is running!`);
   console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
+  if (PUBLIC_URL) console.log(`✅ Public admin: ${PUBLIC_URL}/admin`);
   console.log(`📁 Data folder: ${DATA_DIR} (${codeCount} codes, ${userCount} users loaded)`);
 
-  const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
-  if (RENDER_URL) {
+  if (PUBLIC_URL) {
     setInterval(() => {
-      https.get(`${RENDER_URL}/health`, (res) => {
+      https.get(`${PUBLIC_URL}/health`, (res) => {
         console.log(`Keepalive ping: ${res.statusCode}`);
       }).on("error", (err) => {
         console.error("Keepalive ping failed:", err.message);
