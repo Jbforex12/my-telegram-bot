@@ -50,12 +50,13 @@ const MAX_TOKENS = 2048;
 const MAX_HISTORY = 24;
 const MAX_DOC_CHARS = 14000;
 const MAX_IMAGES_PER_USER_PER_DAY = 5;
-const IMAGE_GEN_PLACEHOLDERS = ["your_openai_api_key_here", ""];
+const POLLINATIONS_MIN_GAP_MS = 16000; // free tier ~1 request per 15s
 
 function hasImageGen() {
-  const key = env("OPENAI_API_KEY");
-  return !!key && !IMAGE_GEN_PLACEHOLDERS.includes(key);
+  return env("IMAGE_GEN") !== "false";
 }
+
+let lastPollinationsAt = 0;
 
 function requireEnv() {
   const placeholders = [
@@ -76,8 +77,8 @@ function requireEnv() {
     process.exit(1);
   }
   console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
-  if (hasImageGen()) console.log("Image generation: enabled (OpenAI DALL-E)");
-  else console.log("Image generation: disabled (set OPENAI_API_KEY in .env to enable)");
+  if (hasImageGen()) console.log("Image generation: enabled (Pollinations.ai — free, no API key)");
+  else console.log("Image generation: disabled (IMAGE_GEN=false)");
 }
 requireEnv();
 
@@ -578,7 +579,7 @@ async function craftImagePrompt(userRequest) {
       {
         role: "system",
         content:
-          "You write prompts for DALL-E 3 educational illustrations for Pathway Prep learners. " +
+          "You write prompts for AI educational illustrations for Pathway Prep learners. " +
           "Output ONLY the image prompt text — no quotes, no preamble. " +
           "Style: clear friendly educational diagram or infographic, labeled parts, simple icons, clean layout, " +
           "high contrast, professional learning material. No copyrighted characters or brand logos. " +
@@ -590,37 +591,34 @@ async function craftImagePrompt(userRequest) {
   return response.choices[0].message.content.trim().slice(0, 4000);
 }
 
+async function waitForPollinationsSlot() {
+  const elapsed = Date.now() - lastPollinationsAt;
+  const wait = POLLINATIONS_MIN_GAP_MS - elapsed;
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastPollinationsAt = Date.now();
+}
+
 async function generateImageBuffer(prompt) {
-  const apiKey = env("OPENAI_API_KEY");
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "dall-e-3",
-      prompt,
-      n: 1,
-      size: "1024x1024",
-      quality: "standard",
-      response_format: "b64_json"
-    })
+  await waitForPollinationsSlot();
+  const url =
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
+    "?width=1024&height=1024&model=flux&nologo=true&enhance=true";
+  const res = await fetch(url, {
+    headers: { "User-Agent": "PathwayPrepBot/1.0" },
+    signal: AbortSignal.timeout(120000)
   });
   if (!res.ok) {
     const errBody = await res.text();
-    throw new Error(`Image API ${res.status}: ${errBody.slice(0, 200)}`);
+    throw new Error(`Pollinations ${res.status}: ${errBody.slice(0, 200)}`);
   }
-  const data = await res.json();
-  return Buffer.from(data.data[0].b64_json, "base64");
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 2000) throw new Error("Invalid or empty image response");
+  return buf;
 }
 
 async function handleImageGenerationRequest(chatId, userText) {
   if (!hasImageGen()) {
-    return bot.sendMessage(
-      chatId,
-      "Illustrations aren't enabled on this bot yet. Ask the Pathway Prep team to add an OpenAI API key (OPENAI_API_KEY)."
-    );
+    return bot.sendMessage(chatId, "Illustrations are turned off on this bot right now.");
   }
   if (imageGenLimitReached(chatId)) {
     return bot.sendMessage(
@@ -630,11 +628,11 @@ async function handleImageGenerationRequest(chatId, userText) {
   }
 
   await bot.sendChatAction(chatId, "upload_photo");
-  const statusMsg = await bot.sendMessage(chatId, "Creating an educational illustration for you — this usually takes 15–30 seconds…");
+  const statusMsg = await bot.sendMessage(chatId, "Creating an educational illustration for you — this may take 20–45 seconds…");
 
   try {
-    const dallePrompt = await craftImagePrompt(userText);
-    const imageBuffer = await generateImageBuffer(dallePrompt);
+    const imagePrompt = await craftImagePrompt(userText);
+    const imageBuffer = await generateImageBuffer(imagePrompt);
     recordImageGen(chatId);
 
     const history = getHistory(chatId);
