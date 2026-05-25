@@ -50,6 +50,7 @@ const MAX_TOKENS = 2048;
 const MAX_HISTORY = 24;
 const MAX_DOC_CHARS = 14000;
 const MAX_IMAGES_PER_USER_PER_DAY = 5;
+const MAX_PDFS_PER_USER_PER_DAY = 5;
 const POLLINATIONS_MIN_GAP_MS = 16000; // free tier ~1 request per 15s
 
 function hasImageGen() {
@@ -79,6 +80,7 @@ function requireEnv() {
   console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
   if (hasImageGen()) console.log("Image generation: enabled (Pollinations.ai — free, no API key)");
   else console.log("Image generation: disabled (IMAGE_GEN=false)");
+  console.log("PDF generation: enabled");
 }
 requireEnv();
 
@@ -317,7 +319,7 @@ function welcomeMessage() {
   return (
     `Welcome to ${BOT_NAME} 👋\n\n` +
     `I'm here to help you build the knowledge, skills and confidence you need to prepare for work and opportunities abroad.\n\n` +
-    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, reviewing documents or images you send me, and creating illustrations when you need a visual to understand a concept.\n\n` +
+    `I can help with career guidance, CV and interview prep, workplace skills, learning new topics, and I can send you real PDF files (CVs, cover letters) and generated images when you need them.\n\n` +
     `To get started, please enter your activation code (for example: JB-XXXXXX).\n\n` +
     `If you don't have one, contact ${SUPPORT_EMAIL} to get access.`
   );
@@ -327,7 +329,7 @@ function activationSuccessMessage() {
   return (
     `You're in! Welcome to ${BOT_NAME} 🎉\n\n` +
     `I'm your personal learning and career assistant for Pathway Prep.\n\n` +
-    `You can ask me questions, request an illustration (e.g. "generate an image explaining…"), send photos, or upload PDFs and Word files — I'll help based on our conversation.\n\n` +
+    `You can ask questions, request a PDF (e.g. "give me a sample CV as a PDF"), request an image (e.g. "generate an image explaining…"), or send me files to review.\n\n` +
     `How can I help you today?`
   );
 }
@@ -459,6 +461,8 @@ YOUR INTELLIGENCE AND TEACHING ABILITY:
 - You can explain complex ideas in plain everyday language without dumbing it down
 - When the user sends an image or document, analyse it carefully in the context of the ongoing conversation. Give thorough, specific, and actionable feedback — not vague summaries
 - When the user asks for a generated illustration or diagram to understand a concept, the system may create one for them — after it is sent, briefly explain what it shows and how it helps their learning
+- When the user asks for a PDF file (CV, resume, cover letter, study guide), the system generates and sends a real PDF in the chat — never tell them to copy text into Word or that you cannot create PDFs
+- FILE CREATION — CRITICAL: You CAN deliver PDF documents and illustration images directly in Telegram. Never say you are unable to generate PDFs, images, or files. For a PDF, users can say "give me a CV as a PDF" or use /pdf. For an image, say "generate an image explaining…" or use /image
 - If a topic is outside Pathway Prep's scope or you genuinely don't know, say: "That's a great question — the support team would be best placed to help you with that. You can reach them at ${SUPPORT_EMAIL}"
 
 QUALITY OF ANSWERS — VERY IMPORTANT:
@@ -614,6 +618,148 @@ async function generateImageBuffer(prompt) {
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < 2000) throw new Error("Invalid or empty image response");
   return buf;
+}
+
+const pdfGenDaily = {};
+
+function userWantsGeneratedPdf(text) {
+  const t = text.toLowerCase();
+  const patterns = [
+    /\b(pdf|\.pdf)\b/,
+    /\b(as|in|into)\s+(a\s+)?pdf\b/,
+    /\b(generate|create|make|write|send|give|export|download|produce)\b.{0,40}\b(pdf|document|file)\b/,
+    /\b(cv|resume|curriculum vitae|cover letter)\b.{0,40}\b(pdf|file|document)\b/,
+    /\b(pdf|file|document)\b.{0,40}\b(cv|resume|cover letter)\b/,
+    /\bgive me\b.{0,50}\b(cv|resume)\b/
+  ];
+  return patterns.some((p) => p.test(t));
+}
+
+function pdfGenLimitReached(chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const entry = pdfGenDaily[chatId];
+  if (!entry || entry.date !== today) return false;
+  return entry.count >= MAX_PDFS_PER_USER_PER_DAY;
+}
+
+function recordPdfGen(chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!pdfGenDaily[chatId] || pdfGenDaily[chatId].date !== today) {
+    pdfGenDaily[chatId] = { date: today, count: 0 };
+  }
+  pdfGenDaily[chatId].count += 1;
+}
+
+function pdfFilename(userText) {
+  const t = userText.toLowerCase();
+  const stamp = Date.now();
+  if (/cover letter/.test(t)) return `Cover-Letter-${stamp}.pdf`;
+  if (/cv|resume|curriculum/.test(t)) return `CV-${stamp}.pdf`;
+  return `Pathway-Prep-Document-${stamp}.pdf`;
+}
+
+async function craftDocumentForPdf(userRequest) {
+  const response = await groq.chat.completions.create({
+    model: TEXT_MODEL,
+    max_tokens: 3000,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write complete professional documents for PDF export: CVs, resumes, cover letters, and study guides. " +
+          "Output ONLY the document body in plain text. No markdown symbols (no *, #, -, **). " +
+          "Put section titles on their own line (e.g. EDUCATION, WORK EXPERIENCE, or Contact:). " +
+          "Use blank lines between sections. Use realistic fictional details when the user asks for sample or random information. " +
+          "CVs must include: full name at top, contact, professional summary, work experience with dates, education, skills."
+      },
+      { role: "user", content: userRequest }
+    ]
+  });
+  let body = response.choices[0].message.content.trim();
+  body = body.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-*]\s+/gm, "• ");
+  const t = userRequest.toLowerCase();
+  let title = "Document";
+  if (/cv|resume|curriculum/.test(t)) title = "Curriculum Vitae";
+  else if (/cover letter/.test(t)) title = "Cover Letter";
+  return { title, body };
+}
+
+function buildPdfBuffer(title, bodyText) {
+  const PDFDocument = require("pdfkit");
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: "A4" });
+    const chunks = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    doc.font("Helvetica-Bold").fontSize(16).text(title, { align: "center" });
+    doc.moveDown(1);
+    doc.font("Helvetica").fontSize(11);
+
+    for (const rawLine of bodyText.split("\n")) {
+      const line = rawLine.trim();
+      if (!line) {
+        doc.moveDown(0.35);
+        continue;
+      }
+      const isHeading =
+        line.length < 70 &&
+        (/^[A-Z][A-Z0-9\s&',.\-/]{2,}$/.test(line) ||
+          /^[A-Za-z][A-Za-z0-9\s]{0,50}:$/.test(line) ||
+          /^(curriculum vitae|resume|cover letter|professional summary|work experience|education|skills|contact|objective)$/i.test(line));
+      if (isHeading) {
+        doc.moveDown(0.4).font("Helvetica-Bold").fontSize(12).text(line);
+        doc.font("Helvetica").fontSize(11);
+      } else {
+        doc.text(line, { lineGap: 2 });
+        doc.moveDown(0.15);
+      }
+    }
+    doc.end();
+  });
+}
+
+async function handlePdfGenerationRequest(chatId, userText) {
+  if (pdfGenLimitReached(chatId)) {
+    return bot.sendMessage(
+      chatId,
+      `You've reached today's limit of ${MAX_PDFS_PER_USER_PER_DAY} PDF documents. Try again tomorrow, or ask for help in text.`
+    );
+  }
+
+  await bot.sendChatAction(chatId, "upload_document");
+  const statusMsg = await bot.sendMessage(chatId, "Creating your PDF — this may take a moment…");
+
+  try {
+    const { title, body } = await craftDocumentForPdf(userText);
+    const pdfBuffer = await buildPdfBuffer(title, body);
+    recordPdfGen(chatId);
+
+    const history = getHistory(chatId);
+    history.push({ role: "user", content: userText });
+    history.push({
+      role: "assistant",
+      content: `[Sent PDF: ${pdfFilename(userText)}] Here is your ${title}. Open the file above — you can download and edit it as needed.`
+    });
+    trimHistory(chatId);
+
+    const filename = pdfFilename(userText);
+    await bot.sendDocument(chatId, pdfBuffer, { caption: `Your ${title} from Pathway Prep` }, { filename });
+    await bot.sendMessage(
+      chatId,
+      "Your PDF is attached above. You can download it, share it, or open it in any PDF reader. Tell me if you'd like changes."
+    );
+    await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+  } catch (err) {
+    console.error("PDF generation error:", err.message);
+    await bot.editMessageText(
+      "I couldn't create that PDF right now — please try again in a moment.",
+      { chat_id: chatId, message_id: statusMsg.message_id }
+    ).catch(() => {
+      bot.sendMessage(chatId, "I couldn't create that PDF right now — please try again in a moment.");
+    });
+  }
 }
 
 async function handleImageGenerationRequest(chatId, userText) {
@@ -774,6 +920,19 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(chatId, welcomeMessage());
 });
 
+bot.onText(/\/pdf(?:@\w+)?(?:\s+([\s\S]+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!gateAccess(msg)) return;
+  const topic = (match[1] || "").trim();
+  if (!topic) {
+    return bot.sendMessage(
+      chatId,
+      "Usage: /pdf [what to create]\n\nExample:\n/pdf sample CV for a marketing graduate with fictional details"
+    );
+  }
+  await handlePdfGenerationRequest(chatId, `Create a PDF document: ${topic}`);
+});
+
 bot.onText(/\/image(?:@\w+)?(?:\s+([\s\S]+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!gateAccess(msg)) return;
@@ -889,6 +1048,9 @@ bot.on("message", async (msg) => {
   }
 
   try {
+    if (userWantsGeneratedPdf(text)) {
+      return handlePdfGenerationRequest(chatId, text);
+    }
     if (userWantsGeneratedImage(text)) {
       return handleImageGenerationRequest(chatId, text);
     }
