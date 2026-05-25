@@ -609,8 +609,8 @@ input[type="number"] { -moz-appearance: textfield; }
 
     <div id="url-field">
       <label>Server URL</label>
-      <input type="text" id="inp-url" placeholder="https://telegram-bot-production-a46e.up.railway.app" />
-      <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px">Use your Railway or Render URL — not a saved file from Downloads. Best: open <strong>/admin</strong> on your live bot URL.</p>
+      <input type="text" id="inp-url" placeholder="https://your-app.onrender.com" />
+      <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px">Use one live URL (Render recommended). Open <strong>/admin</strong> on that host — not Netlify, not a file from Downloads.</p>
     </div>
 
     <label>Admin API Key</label>
@@ -845,7 +845,7 @@ async function init() {
     document.getElementById('login-subtitle').textContent =
       'You are on your live admin site. Enter your API key to continue.';
   } else {
-    document.getElementById('inp-url').value = savedUrl || 'https://telegram-bot-production-a46e.up.railway.app';
+    document.getElementById('inp-url').value = savedUrl || '';
   }
 
   if (savedKey) document.getElementById('inp-key').value = savedKey;
@@ -894,7 +894,7 @@ async function doLogin(auto = false) {
       return;
     }
     if (r.status === 502 || r.status === 503) {
-      if (!auto) err.textContent = 'Bot server is offline (502). In Railway: check Deploy logs and set TELEGRAM_BOT_TOKEN, GROQ_API_KEY, ADMIN_API_KEY, then redeploy.';
+      if (!auto) err.textContent = 'Bot server is offline (502). On Render/Railway: check Logs, set TELEGRAM_BOT_TOKEN, GROQ_API_KEY, ADMIN_API_KEY, and run only ONE host.';
       return;
     }
     if (!r.ok) {

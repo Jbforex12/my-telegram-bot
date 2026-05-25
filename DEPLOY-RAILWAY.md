@@ -1,5 +1,8 @@
 # Deploy Pathway Prep Bot on Railway
 
+> **Start here instead:** [DEPLOY-FRESH-START.md](./DEPLOY-FRESH-START.md) — use **one** host (Render recommended). Do not run Railway and Render together.
+
+# Deploy Pathway Prep Bot on Railway (optional)
 Your bot URL: **https://telegram-bot-production-a46e.up.railway.app**
 
 Admin panel (use this in the browser — not a file from Downloads):
