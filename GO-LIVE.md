@@ -48,6 +48,16 @@ Do **not** run `START-BOT.ps1` on your PC while Render is live.
 
 ---
 
+## Browser shows plain "Not Found" on /health
+
+That means Render is **not** running your Node app yet (not the bot’s JSON error).
+
+1. Render dashboard → your service → **Logs**
+2. If you see `Missing required environment variables` → **Environment** → add `TELEGRAM_BOT_TOKEN` and `GROQ_API_KEY` from `.env` → **Manual Deploy**
+3. Confirm **Start command** is `npm start` and **Root directory** is empty (repo root)
+4. Confirm service type is **Web Service**, not Static Site
+5. After fix, `/health` should show JSON like `{"status":"ok",...}` not plain "Not Found"
+
 ## If the bot does not reply
 
 - Render **Logs** → look for `Env OK` and `HTTP server listening`

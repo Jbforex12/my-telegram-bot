@@ -69,30 +69,41 @@ function groqChatParams(extra = {}) {
 
 let lastPollinationsAt = 0;
 
-function requireEnv() {
-  const placeholders = [
-    "your_telegram_bot_token_here",
-    "your_groq_api_key_here",
-    "your_telegram_chat_id_here",
-    "change-this-to-a-strong-secret-key"
-  ];
+const ENV_PLACEHOLDERS = [
+  "your_telegram_bot_token_here",
+  "your_groq_api_key_here",
+  "your_telegram_chat_id_here",
+  "change-this-to-a-strong-secret-key"
+];
+
+function getMissingRequiredEnv() {
   const missing = [];
   const token = env("TELEGRAM_BOT_TOKEN");
   const groqKey = env("GROQ_API_KEY");
-  if (!token || placeholders.includes(token)) missing.push("TELEGRAM_BOT_TOKEN");
-  if (!groqKey || placeholders.includes(groqKey)) missing.push("GROQ_API_KEY");
+  if (!token || ENV_PLACEHOLDERS.includes(token)) missing.push("TELEGRAM_BOT_TOKEN");
+  if (!groqKey || ENV_PLACEHOLDERS.includes(groqKey)) missing.push("GROQ_API_KEY");
+  return missing;
+}
+
+let botReady = false;
+
+function logEnvStatus() {
+  const missing = getMissingRequiredEnv();
   if (missing.length) {
-    console.error("\n❌ Bot cannot start — missing environment variables:\n");
+    console.error("\n❌ Missing required environment variables:\n");
     missing.forEach((key) => console.error(`   • ${key}`));
-    console.error("\nSet these in Railway → Variables (no extra quotes), then Redeploy.\n");
-    process.exit(1);
+    console.error("\nRender → your service → Environment → add them (no quotes), then Manual Deploy.\n");
+    console.error("HTTP server is up for /health — Telegram will start after variables are set.\n");
+    return false;
   }
+  const token = env("TELEGRAM_BOT_TOKEN");
+  const groqKey = env("GROQ_API_KEY");
   console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
   if (hasImageGen()) console.log("Image generation: enabled (IMAGE_GEN=true — Pollinations.ai)");
   else console.log("Image generation: off — PDF/Word/Excel exports and photo analysis only");
   console.log(`File export: ${SUPPORTED_FILE_FORMATS.join(", ")}`);
+  return true;
 }
-requireEnv();
 
 // ─── Data helpers ──────────────────────────────────────────────────────────
 function ensureDataDir() {
@@ -509,9 +520,11 @@ let bot;
 let groq;
 
 function initTelegramBot() {
+  if (!logEnvStatus()) return;
   console.log("Starting Telegram polling…");
   bot = new TelegramBot(token, { polling: true });
   groq = new Groq({ apiKey: env("GROQ_API_KEY") });
+  botReady = true;
 
 const conversations = {};
 const firstMessage = {};
@@ -1696,10 +1709,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && p === "/health") {
+    const missing = getMissingRequiredEnv();
     return sendJSON(res, 200, {
-      status: "ok",
+      status: missing.length ? "misconfigured" : "ok",
       uptime: Math.floor(process.uptime()),
-      dataDir: DATA_DIR
+      dataDir: DATA_DIR,
+      botReady,
+      missingEnv: missing.length ? missing : undefined,
+      hint: missing.length
+        ? "Add missing variables in Render → Environment, then redeploy."
+        : undefined
     });
   }
 
@@ -1824,14 +1843,15 @@ const PUBLIC_URL =
   (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
 
 server.listen(PORT, HOST, () => {
-  initTelegramBot();
   const codeCount = Object.keys(loadCodes().codes).length;
   const userCount = Object.keys(loadUsers().users).length;
   console.log(`✅ HTTP server listening on ${HOST}:${PORT}`);
-  console.log(`✅ Pathway Prep Bot is running!`);
+  console.log(`✅ Health check: http://${HOST}:${PORT}/health`);
   console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
   if (PUBLIC_URL) console.log(`✅ Public admin: ${PUBLIC_URL}/admin`);
   console.log(`📁 Data folder: ${DATA_DIR} (${codeCount} codes, ${userCount} users loaded)`);
+  initTelegramBot();
+  if (botReady) console.log(`✅ Pathway Prep Bot is running!`);
 
   if (PUBLIC_URL) {
     setInterval(() => {
