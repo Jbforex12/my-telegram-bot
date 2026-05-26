@@ -49,15 +49,22 @@ const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const MAX_TOKENS = 2048;
 const MAX_HISTORY = 24;
 const MAX_DOC_CHARS = 14000;
-const MAX_IMAGES_PER_USER_PER_DAY = 5;
 const MAX_FILES_PER_USER_PER_DAY = 8;
 const SUPPORTED_FILE_FORMATS = ["pdf", "docx", "txt", "md", "xlsx", "csv", "html"];
-const POLLINATIONS_MIN_GAP_MS = 16000; // free tier ~1 request per 15s
+const CHAT_TEMPERATURE = 0.65;
+const CHAT_TOP_P = 0.9;
+// Image generation (Pollinations) is opt-in only — default off; documents + vision analysis are supported
+const POLLINATIONS_MIN_GAP_MS = 16000;
 const IMAGE_GEN_MODEL = env("IMAGE_GEN_MODEL") || "turbo";
 const IMAGE_GEN_MAX_ATTEMPTS = 2;
+const MAX_IMAGES_PER_USER_PER_DAY = 5;
 
 function hasImageGen() {
-  return env("IMAGE_GEN") !== "false";
+  return env("IMAGE_GEN") === "true";
+}
+
+function groqChatParams(extra = {}) {
+  return { temperature: CHAT_TEMPERATURE, top_p: CHAT_TOP_P, ...extra };
 }
 
 let lastPollinationsAt = 0;
@@ -81,8 +88,8 @@ function requireEnv() {
     process.exit(1);
   }
   console.log(`Env OK — PORT=${PORT}, token length=${token.length}, groq length=${groqKey.length}`);
-  if (hasImageGen()) console.log("Image generation: enabled (Pollinations.ai — free, no API key)");
-  else console.log("Image generation: disabled (IMAGE_GEN=false)");
+  if (hasImageGen()) console.log("Image generation: enabled (IMAGE_GEN=true — Pollinations.ai)");
+  else console.log("Image generation: off — PDF/Word/Excel exports and photo analysis only");
   console.log(`File export: ${SUPPORTED_FILE_FORMATS.join(", ")}`);
 }
 requireEnv();
@@ -332,12 +339,55 @@ function activationSuccessMessage() {
   return (
     `You're in! Welcome to ${BOT_NAME} 🎉\n\n` +
     `I'm your personal learning and career assistant for Pathway Prep.\n\n` +
-    `You can ask questions, request a file in any format (e.g. "CV as a Word document", "sample CV as PDF"), request an image, or send me files to review.\n\n` +
+    `You can ask questions, request files (PDF, Word, etc.), send course screenshots to learn the page like a tutor, or upload documents to review.\n\n` +
     `How can I help you today?`
   );
 }
 
 // ─── Reply formatting ──────────────────────────────────────────────────────
+function escapeTelegramHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** True if a numbered line is a short section heading, not a long explanatory step */
+function isNumberedHeadingLine(line) {
+  const m = line.trim().match(/^\d+\.\s+(.+)$/);
+  if (!m) return false;
+  const body = m[1].trim();
+  if (body.length > 72) return false;
+  if ((body.match(/\.\s/g) || []).length >= 2) return false;
+  return true;
+}
+
+function formatLineForTelegramHtml(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return "";
+
+  const hash = trimmed.match(/^#{1,6}\s+(.+)$/);
+  if (hash) return `<b>${escapeTelegramHtml(hash[1].trim())}</b>`;
+
+  if (isNumberedHeadingLine(line)) {
+    return `<b>${escapeTelegramHtml(trimmed)}</b>`;
+  }
+
+  const label = trimmed.match(
+    /^(Example|Tip|Warning|Common mistake|Why this matters):\s*(.*)$/i
+  );
+  if (label) {
+    const rest = label[2] ? escapeTelegramHtml(label[2]) : "";
+    return `<b>${escapeTelegramHtml(label[1] + ":")}</b>${rest ? " " + rest : ""}`;
+  }
+
+  return escapeTelegramHtml(line);
+}
+
+function toTelegramHtml(plain) {
+  return plain.split("\n").map(formatLineForTelegramHtml).join("\n");
+}
+
 function formatReply(text) {
   if (!text) return text;
   let out = text
@@ -350,17 +400,35 @@ function formatReply(text) {
     .replace(/(•[^\n]*|^\d+\.[^\n]*)\n([^•\n\d])/gm, "$1\n\n$2")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  out = out.replace(
+    /\n+(Best|Kind|Warm) regards[,!]?\s*\n+.*Pathway Prep[^\n]*\s*$/i,
+    ""
+  ).replace(/\n+Pathway Prep wishes you[^\n]*\s*$/i, "").trim();
+  out = out.replace(
+    /^(This (is )?(a |an )?(screenshot|image|photo|infographic|picture)|I can see (a |an )?(screenshot|image))[^.!?]*[.!?]\s*/i,
+    ""
+  ).trim();
   return out;
 }
 
+async function sendTelegramFormatted(chatId, plain) {
+  const html = toTelegramHtml(plain);
+  try {
+    await bot.sendMessage(chatId, html, { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("HTML send failed, using plain text:", err.message);
+    await bot.sendMessage(chatId, plain);
+  }
+}
+
 async function sendLongMessage(chatId, text) {
-  const formatted = formatReply(text);
-  if (formatted.length <= 4000) {
-    await bot.sendMessage(chatId, formatted);
+  const plain = formatReply(text);
+  if (plain.length <= 4000) {
+    await sendTelegramFormatted(chatId, plain);
     return;
   }
   const parts = [];
-  let remaining = formatted;
+  let remaining = plain;
   while (remaining.length > 0) {
     if (remaining.length <= 4000) {
       parts.push(remaining);
@@ -373,7 +441,7 @@ async function sendLongMessage(chatId, text) {
     remaining = remaining.slice(splitAt).trim();
   }
   for (const part of parts) {
-    if (part) await bot.sendMessage(chatId, part);
+    if (part) await sendTelegramFormatted(chatId, part);
   }
 }
 
@@ -462,18 +530,24 @@ YOUR INTELLIGENCE AND TEACHING ABILITY:
 - When someone wants to learn something, become their tutor. Break topics down step by step, use simple real-life examples, check understanding naturally, and build on what they know
 - Adapt your depth to the user — if they seem advanced, go deeper; if they seem new to a topic, start from the basics
 - You can explain complex ideas in plain everyday language without dumbing it down
-- When the user sends an image or document, analyse it carefully in the context of the ongoing conversation. Give thorough, specific, and actionable feedback — not vague summaries
-- When the user asks for a generated illustration or diagram to understand a concept, the system may create one for them — after it is sent, briefly explain what it shows and how it helps their learning
+- When the user sends a photo, analyse only what is visible and answer their exact question — never invent details that are not in the image
+- When the user sends a document, read it carefully and respond in the context of the conversation with specific, actionable feedback
+- You do NOT generate pictures or illustrations. For diagrams, charts, or layouts, the system sends PDF, Word, Excel, or similar files — never offer to draw or generate an image
 - When the user asks for a file (PDF, Word, Excel, text, etc.), the system generates and sends a real downloadable file — never tell them to copy text into Word or that you cannot create files
-- FILE CREATION — CRITICAL: You CAN deliver files in these formats: PDF, Word (docx), Excel (xlsx), CSV, plain text (txt), Markdown (md), HTML, plus generated images. Never say you cannot create files. Examples: "CV as a Word document", "give me a PDF resume", "create an Excel file with…", /file docx [topic], /file pdf [topic], /image [topic]
+- FILE CREATION — CRITICAL: You CAN deliver files in these formats: PDF, Word (docx), Excel (xlsx), CSV, plain text (txt), Markdown (md), HTML. Never say you cannot create files. Examples: "CV as a Word document", "give me a PDF resume", "create an Excel file with…", /file docx [topic], /file pdf [topic]
 - If a topic is outside Pathway Prep's scope or you genuinely don't know, say: "That's a great question — the support team would be best placed to help you with that. You can reach them at ${SUPPORT_EMAIL}"
+
+REASONING — VERY IMPORTANT:
+- Think through what the user really needs before you write: their goal, what a strong answer must include, and the clearest order to explain it
+- For "why" and "how" questions, show cause and effect, trade-offs, and what good looks like in real workplaces — not just definitions
+- For interview or career questions: state what the interviewer is evaluating, give a concrete example answer, then explain why it works and what to avoid
+- Use frameworks when they help (e.g. STAR for experience stories) and apply them to the user's situation, not as abstract theory
+- If the question is slightly ambiguous, answer the most likely Pathway Prep intent and weave in one brief natural assumption — never use labels like "Assumption:"
 
 QUALITY OF ANSWERS — VERY IMPORTANT:
 - Never give generic, surface-level, or cliché responses. Phrases like "I've always been passionate about helping others" or "I'm a team player" are weak and meaningless — never produce them
 - Every answer must feel specific, credible, and well-reasoned — the kind of answer that makes an interviewer or reader pause and think "that's a good point"
 - When giving example interview answers, make them sound like a real, thoughtful person speaking — grounded, specific, and confident. Not a template
-- For interview prep, always explain the thinking behind the answer: what the interviewer is really looking for, why this answer works, and what to avoid saying
-- Use real-world knowledge, frameworks, and insight — for example, use the STAR method (Situation, Task, Action, Result) when relevant to structure experience-based answers
 - When listing questions and answers, give a sharp, well-constructed example answer followed by a brief coaching note on why it lands well
 - Never pad responses. Every sentence should earn its place
 
@@ -483,38 +557,94 @@ RESPONSE LENGTH:
 - For bigger topics (e.g. "give me interview questions and answers"), go deeper — cover the topic properly with enough detail to be genuinely useful, but stop as soon as you've said what matters
 - Never add filler sentences, summaries of what you just said, or unnecessary sign-offs at the end of a detailed answer
 
-REPLY STYLE — VERY IMPORTANT:
-- Write in a professional, polished tone with generous visual spacing — never let text feel cramped or compressed
-- Always put a blank line between every paragraph, and between every list item
-- For unordered lists, use the bullet character • at the start of each line
-- For ordered or step-by-step lists, use numbers: 1. 2. 3.
-- Never use asterisks (*), dashes (-), or any markdown symbols as list markers or for emphasis
-- Structure longer answers with a short opening line, then clearly spaced sections, then a warm close
-- Do NOT end every reply with a question. Only ask when you genuinely need more information
-- Never echo back what the user just said
-- Never use robotic or corporate phrases
-- Never expose technical language to the user
-- When a user says "okay", "thanks", "bye", or signals the conversation is ending — respond warmly and briefly, then stop
-- Always follow the user's lead if they change topic
+WRITING RULES — VERY IMPORTANT:
+1. Structure explanations with numbered sections (1. 2. 3.) and clear headings or subheadings for each main idea
+2. Add practical real-life examples frequently — every major explanation needs at least one example or scenario
+3. After explaining a concept, cover why it matters, common mistakes, and possible consequences when relevant
+4. Avoid walls of text — short paragraphs (2–4 lines), blank lines between sections
+5. Use bullet character • whenever listing items, steps, tools, rules, or warnings
+6. For processes: step-by-step numbered steps; for each procedure explain what to do, what not to do, and why
+7. Sound human and conversational — vary sentence patterns; never robotic or repetitive
+8. Break difficult ideas into smaller parts; do not rush
+9. Beginner-friendly language unless they ask for advanced depth
+10. Use teaching labels on their own line when helpful: Example: / Tip: / Warning: / Common mistake: / Why this matters:
+11. Mini summaries after important sections when the topic is long
+12. Natural training-manual flow — structured hierarchy (titles, numbering, spacing, bullets, examples), not one continuous dump
+13. Never use # or markdown for bold or headings — no asterisks (*). Write titles on their own line or as numbered lines; the bot applies bold automatically in Telegram
+14. Never use dashes (-) as list markers — use • bullets only
 
-CLARIFYING vs ANSWERING — VERY IMPORTANT:
-- If your response needs to both clarify something and answer a question, weave them together naturally — do not use labels like "To clarify:" or "To answer:"
-- Handle the clarification first in plain flowing language, then move straight into the answer without signposting the transition
-- The response should read as one coherent, intelligent reply — not a form or a template
+REPLY STYLE:
+- Generous spacing between every paragraph and list item
+- End on useful content, not formulaic sign-offs
+- Do NOT end every reply with a question unless offering quiz/move-on after a lesson
+- Never echo back what the user just said
+- Never expose technical language to the user
+- When a user says "okay", "thanks", "bye" — respond warmly and briefly, then stop
+
+CLOSINGS — CRITICAL:
+- Do NOT sign off routine answers with "Best regards", "Kind regards", "Warm regards", or similar letter-style endings
+- Do NOT end every message by naming Pathway Prep, wishing them well on their journey, or adding a branded footer
+- Most replies should simply finish when the answer is complete — no extra goodbye paragraph
+- Only add a brief warm sign-off when the user is clearly ending the chat (thanks, bye, that's all) — one short line is enough, and skip "Best regards" unless they asked for a formal letter or email draft
+- If you mention Pathway Prep at the end, do so at most rarely — not on every reply
+
+CLARIFYING vs ANSWERING:
+- Weave clarifications into the answer naturally — no "To clarify:" or "To answer:" labels (teaching labels like Example: and Tip: are fine)
 
 TUTORING MODE:
-- If a user wants to learn or study something, guide them through it like a patient, encouraging tutor
-- Teach one concept at a time, use relatable examples
-- Occasionally check understanding naturally
-- Celebrate progress with genuine warmth
+- Follow WRITING RULES: numbered sections, headings, bullets, examples, Tip/Warning labels
+- Teach like a real instructor: "you," "let's," plain English — never "this screenshot shows"
+- For follow-ups on a lesson page in chat, continue with the same structure — do not ask them to resend the image
 
 TONE:
 - Warm, human, encouraging and real
-- Like a smart, supportive friend who genuinely wants to help — not a customer service bot
+- Like a smart, supportive friend who genuinely wants to help — not a customer service bot or email template
 - Honest when you don't know something
-
-Always end conversations warmly, mentioning Pathway Prep by name.
 `.trim();
+
+const lessonScreenshotGuide = `
+LESSON PAGE MODE (training pages, slides, manuals, module screens):
+Professional training manual by a real instructor — warm, conversational, highly structured.
+
+VOICE AND OPENING:
+- Never say screenshot, image, infographic, or mobile device. Open with the topic naturally, e.g. "Alright, this one is about washing and ironing properly. Let's work through it."
+- Use "you," "let's," "notice," "here's the thing." Vary how you start each reply. Beginner-friendly English. No sign-offs.
+
+STRUCTURE (follow WRITING RULES strictly):
+- Numbered main sections (1. 2. 3.) with clear headings on their own line — never use # symbols; headings are auto-bold in Telegram
+- Subheadings inside long sections. Blank line between every block
+- Short paragraphs only. Bullet • for every list of items, steps, tools, rules, or warnings
+- Step-by-step for procedures: what to do, what not to do, why — use numbered steps
+- After key concepts: Why this matters, Common mistake, possible consequences (use those labels on their own line)
+- Sprinkle Example: Tip: Warning: where they help. At least one real-life example or scenario in every major section
+- Mini summary after important sections if the page is long
+- Group many steps into staged sections (e.g. 1. Preparing  2. Washing  3. Drying) — do not rush or dump everything at once
+- Do not repeat the page verbatim — explain, expand, teach
+
+CONTENT:
+- Read all visible text, tables, captions, diagrams (describe diagrams in plain speech)
+- Diagrams: what they show and how they fit the lesson
+- Safety and red flags: use Warning: so they stand out
+- Definitions: simple words first, then formal term if on the page
+- Numbers/dosages: what they mean and why they matter in practice
+
+CLOSING:
+- One-line wrap-up: the single must-remember point
+- Then: "Want me to quiz you on this, or shall we move on?" Quiz = one question at a time
+
+FOLLOW-UPS:
+- Same page, no resend — use chat history. Re-teach in smaller parts if confused
+
+OTHER PHOTOS (CV, interview, job ad):
+- Shorter, career-focused, still structured with bullets/examples where useful
+`.trim();
+
+const visionSystemPrompt = `${systemPrompt}
+
+${lessonScreenshotGuide}
+`.trim();
+
+const VISION_MAX_TOKENS = 3500;
 
 function getHistory(chatId) {
   if (!conversations[chatId]) conversations[chatId] = [];
@@ -535,13 +665,14 @@ async function chatText(chatId, userText) {
   const response = await groq.chat.completions.create({
     model: TEXT_MODEL,
     max_tokens: MAX_TOKENS,
+    ...groqChatParams(),
     messages: [
       { role: "system", content: systemPrompt },
       ...history
     ]
   });
 
-  const reply = response.choices[0].message.content;
+  const reply = formatReply(response.choices[0].message.content);
   history.push({ role: "assistant", content: reply });
   trimHistory(chatId);
   return reply;
@@ -855,6 +986,7 @@ async function craftDocumentContent(userRequest, format) {
   const response = await groq.chat.completions.create({
     model: TEXT_MODEL,
     max_tokens: 3000,
+    ...groqChatParams({ temperature: 0.55 }),
     messages: [
       {
         role: "system",
@@ -1031,9 +1163,61 @@ async function handleFileGenerationRequest(chatId, userText) {
   }
 }
 
+function buildVisionUserText(caption, intro) {
+  const q = (caption || "").trim();
+  if (q) {
+    return (
+      intro +
+      q +
+      "\n\n[If this is course/training material: LESSON PAGE MODE — tutor voice, no 'screenshot' talk, explain don't repeat. Otherwise answer from what is visible.]"
+    );
+  }
+  return (
+    intro +
+    "Teach this course page: numbered sections, headings, bullets, Example/Tip/Warning labels, real-life examples. " +
+    "Open naturally with the topic — never say screenshot. Step-by-step, why it matters, common mistakes. " +
+    "Wrap-up line, then offer quiz or move on. CV/interview photo = brief structured career feedback only."
+  );
+}
+
+/** Follow-up text about a screenshot already discussed — keep lesson context in history */
+function isLikelyScreenshotFollowUp(chatId, text) {
+  const history = getHistory(chatId);
+  if (!history.length) return false;
+  const recent = history.slice(-6).map((m) => m.content || "").join(" ");
+  return /\[Lesson\/course screenshot uploaded/i.test(recent) && text.length < 800;
+}
+
+function buildScreenshotFollowUpPrefix() {
+  return (
+    "[Follow-up on the lesson page in this chat — no screenshot talk, no resend. " +
+    "Use WRITING RULES: numbered sections, headings, bullets, Example/Tip/Warning. " +
+    "Re-explain in smaller parts if confused. Quiz = one question at a time. Vary your opening.]\n\n"
+  );
+}
+
+/** User asked for a generated picture — offer a document instead (default behaviour). */
+async function handleIllustrationAsDocument(chatId, userText) {
+  const format = detectRequestedFileFormat(userText) || "pdf";
+  const fmt = SUPPORTED_FILE_FORMATS.includes(format) ? format : "pdf";
+  const label = formatLabel(fmt);
+  await bot.sendMessage(
+    chatId,
+    `I create ${label} and other document files, not pictures. I'll build a ${label} with clear headings and bullet points for you now.`
+  );
+  const topic = userText
+    .replace(/\b(generate|create|make|draw|produce|design|illustrate|visuali[sz]e)\b/gi, "explain")
+    .replace(/\b(an?\s+)?(image|picture|illustration|photo|diagram|infographic)\b/gi, "topic")
+    .trim();
+  return handleFileGenerationRequest(
+    chatId,
+    `Create a ${fmt} document with clear sections and bullet points (text layout only, no images): ${topic}`
+  );
+}
+
 async function handleImageGenerationRequest(chatId, userText) {
   if (!hasImageGen()) {
-    return bot.sendMessage(chatId, "Illustrations are turned off on this bot right now.");
+    return handleIllustrationAsDocument(chatId, userText);
   }
   if (imageGenLimitReached(chatId)) {
     return bot.sendMessage(
@@ -1075,9 +1259,10 @@ async function chatVision(chatId, imageUrl, userText) {
 
   const response = await groq.chat.completions.create({
     model: VISION_MODEL,
-    max_tokens: MAX_TOKENS,
+    max_tokens: VISION_MAX_TOKENS,
+    ...groqChatParams({ temperature: 0.5 }),
     messages: [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: visionSystemPrompt },
       ...prior,
       {
         role: "user",
@@ -1089,8 +1274,12 @@ async function chatVision(chatId, imageUrl, userText) {
     ]
   });
 
-  const reply = response.choices[0].message.content;
-  history.push({ role: "user", content: `[Image uploaded] ${userText}` });
+  const reply = formatReply(response.choices[0].message.content);
+  const summaryHint = userText.slice(0, 200);
+  history.push({
+    role: "user",
+    content: `[Lesson/course screenshot uploaded — remember this page for follow-up questions without resending] ${summaryHint}`
+  });
   history.push({ role: "assistant", content: reply });
   trimHistory(chatId);
   return reply;
@@ -1207,10 +1396,13 @@ bot.onText(/\/image(?:@\w+)?(?:\s+([\s\S]+))?/, async (msg, match) => {
   if (!topic) {
     return bot.sendMessage(
       chatId,
-      "Usage: /image [topic to illustrate]\n\nExample:\n/image how the STAR method works in interviews"
+      "Picture generation is disabled. Use a document instead:\n\n/file pdf [topic]\n/file docx [topic]\n\nExample:\n/file pdf STAR method for interviews"
     );
   }
-  await handleImageGenerationRequest(chatId, `Generate an educational illustration explaining: ${topic}`);
+  if (hasImageGen()) {
+    return handleImageGenerationRequest(chatId, `Generate an educational illustration explaining: ${topic}`);
+  }
+  return handleIllustrationAsDocument(chatId, `Create a diagram or guide explaining: ${topic}`);
 });
 
 bot.onText(/\/forget/, (msg) => {
@@ -1222,14 +1414,24 @@ bot.onText(/\/forget/, (msg) => {
 
 bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
-  if (!isAdmin(chatId)) return;
+  if (isAdmin(chatId)) {
+    return bot.sendMessage(chatId,
+      "Admin commands:\n\n" +
+      "/gencode [note] — generate an activation code\n" +
+      "/codes — list all codes\n" +
+      "/users — list all users\n" +
+      "/ban [chatId] [reason] — ban a user\n" +
+      "/unban [chatId] — unban a user"
+    );
+  }
   bot.sendMessage(chatId,
-    "Admin commands:\n\n" +
-    "/gencode [note] — generate an activation code\n" +
-    "/codes — list all codes\n" +
-    "/users — list all users\n" +
-    "/ban [chatId] [reason] — ban a user\n" +
-    "/unban [chatId] — unban a user"
+    "Pathway Prep commands:\n\n" +
+    "/file [format] [topic] — PDF, Word, Excel, etc.\n" +
+    "/pdf [topic] — quick PDF\n" +
+    "/forget — clear chat history\n\n" +
+    "Send a course/training screenshot — I'll teach the page like a tutor (plain language, key points, quiz optional).\n" +
+    "Add a caption to ask something specific. Follow-up questions work without resending the image.\n" +
+    "Supported files: PDF, Word, Excel, text."
   );
 });
 
@@ -1319,12 +1521,15 @@ bot.on("message", async (msg) => {
       return handleFileGenerationRequest(chatId, text);
     }
     if (userWantsGeneratedImage(text)) {
-      return handleImageGenerationRequest(chatId, text);
+      return hasImageGen()
+        ? handleImageGenerationRequest(chatId, text)
+        : handleIllustrationAsDocument(chatId, text);
     }
 
     bot.sendChatAction(chatId, "typing");
     const intro = buildIntro(chatId);
-    const reply = await chatText(chatId, intro + text);
+    const followUp = isLikelyScreenshotFollowUp(chatId, text) ? buildScreenshotFollowUpPrefix() : "";
+    const reply = await chatText(chatId, intro + followUp + text);
     await sendLongMessage(chatId, reply);
   } catch (err) {
     console.error("Message error:", err.message);
@@ -1351,7 +1556,7 @@ bot.on("photo", async (msg) => {
     const file = await bot.getFile(photo.file_id);
     const imageUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
     const intro = buildIntro(chatId);
-    const prompt = intro + (msg.caption || "Please analyse this image in detail based on our conversation. Describe what you see and give helpful, specific feedback.");
+    const prompt = buildVisionUserText(msg.caption, intro);
     const reply = await chatVision(chatId, imageUrl, prompt);
     await sendLongMessage(chatId, reply);
   } catch (err) {
@@ -1375,10 +1580,18 @@ bot.on("document", async (msg) => {
 
   const doc = msg.document;
   const fileName = doc.file_name || "file.bin";
+  const mime = (doc.mime_type || "").toLowerCase();
 
   bot.sendChatAction(chatId, "typing");
   try {
     const file = await bot.getFile(doc.file_id);
+    if (mime.startsWith("image/")) {
+      const imageUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+      const intro = buildIntro(chatId);
+      const prompt = buildVisionUserText(msg.caption, intro);
+      const reply = await chatVision(chatId, imageUrl, prompt);
+      return sendLongMessage(chatId, reply);
+    }
     const buffer = await downloadTelegramFile(file.file_path);
     const extracted = await extractDocumentText(fileName, buffer);
     const intro = buildIntro(chatId);
@@ -1406,8 +1619,22 @@ bot.on("document", async (msg) => {
   }
 });
 
+let last409HintAt = 0;
 bot.on("polling_error", (err) => {
-  console.error("Polling error:", err.message);
+  const msg = err.message || String(err);
+  console.error("Polling error:", msg);
+  if (msg.includes("409") || /getUpdates/i.test(msg)) {
+    const now = Date.now();
+    if (now - last409HintAt > 60000) {
+      last409HintAt = now;
+      console.error(
+        "\n⚠️  Another bot instance is using this Telegram token.\n" +
+        "   • Stop extra local copies: run STOP-BOT.ps1 (or close all terminals running npm start)\n" +
+        "   • If Render/Railway is live: suspend it before running locally, or keep cloud only\n" +
+        "   • Rule: exactly ONE running bot (local OR cloud, never both)\n"
+      );
+    }
+  }
 });
 
 } // initTelegramBot
@@ -1555,23 +1782,37 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { success: true });
   }
 
-  if (req.method === "POST" && p.match(/^\/api\/users\/\d+\/ban$/)) {
-    const id = p.split("/")[3];
-    const body = await parseBody(req);
-    const data = loadUsers();
-    data.banned[id] = { reason: body.reason || "Blocked via admin panel", at: new Date().toISOString() };
-    saveUsers(data);
-    bot.sendMessage(id, `Your access has been restricted. Contact ${SUPPORT_EMAIL} if you think this is a mistake.`).catch(() => {});
-    return sendJSON(res, 200, { success: true });
+  if (req.method === "POST" && p.match(/^\/api\/users\/[^/]+\/ban$/)) {
+    const id = String(decodeURIComponent(p.split("/")[3]));
+    try {
+      const body = await parseBody(req);
+      const data = loadUsers();
+      data.banned[id] = { reason: body.reason || "Blocked via admin panel", at: new Date().toISOString() };
+      saveUsers(data);
+      if (bot) {
+        bot.sendMessage(id, `Your access has been restricted. Contact ${SUPPORT_EMAIL} if you think this is a mistake.`).catch(() => {});
+      }
+      return sendJSON(res, 200, { success: true });
+    } catch (e) {
+      console.error("Ban API error:", e.message);
+      return sendJSON(res, 500, { error: "Failed to block user" });
+    }
   }
 
-  if (req.method === "POST" && p.match(/^\/api\/users\/\d+\/unban$/)) {
-    const id = p.split("/")[3];
-    const data = loadUsers();
-    delete data.banned[id];
-    saveUsers(data);
-    bot.sendMessage(id, "Your access has been restored. Welcome back!").catch(() => {});
-    return sendJSON(res, 200, { success: true });
+  if (req.method === "POST" && p.match(/^\/api\/users\/[^/]+\/unban$/)) {
+    const id = String(decodeURIComponent(p.split("/")[3]));
+    try {
+      const data = loadUsers();
+      delete data.banned[id];
+      saveUsers(data);
+      if (bot) {
+        bot.sendMessage(id, "Your access has been restored. Welcome back!").catch(() => {});
+      }
+      return sendJSON(res, 200, { success: true });
+    } catch (e) {
+      console.error("Unban API error:", e.message);
+      return sendJSON(res, 500, { error: "Failed to unblock user" });
+    }
   }
 
   return sendJSON(res, 404, { error: "Not found" });

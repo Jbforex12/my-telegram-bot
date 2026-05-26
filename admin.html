@@ -455,6 +455,8 @@ input[type="number"] { -moz-appearance: textfield; }
   width: 100%;
   max-width: 380px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  position: relative;
+  z-index: 10001;
 }
 .modal-box h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
 .modal-box p { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
@@ -735,7 +737,7 @@ input[type="number"] { -moz-appearance: textfield; }
               <label>Label / Note (optional)</label>
               <input type="text" id="gen-note" placeholder="e.g. Batch 1 — June 2026" />
             </div>
-            <button class="btn btn-primary btn-generate" onclick="generateCodes()">Generate codes</button>
+            <button type="button" class="btn btn-primary btn-generate" onclick="generateCodes()">Generate codes</button>
           </div>
           <div id="gen-output"></div>
         </div>
@@ -785,8 +787,8 @@ input[type="number"] { -moz-appearance: textfield; }
     <p id="modal-body"></p>
     <input type="text" id="modal-input" placeholder="Blocked by admin" />
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="modalCancel()">Cancel</button>
-      <button class="btn btn-danger" id="modal-confirm" onclick="modalConfirm()">Block user</button>
+      <button type="button" class="btn btn-ghost" id="modal-cancel-btn">Cancel</button>
+      <button type="button" class="btn btn-danger" id="modal-confirm">Block user</button>
     </div>
   </div>
 </div>
@@ -813,8 +815,15 @@ function isHostedAdmin() {
   return isOnRender() || isOnRailway();
 }
 
+/** Admin page served by the bot (localhost or live host) — URL field not needed */
+function isServedByBot() {
+  if (window.location.protocol === 'file:') return false;
+  if (!window.location.protocol.startsWith('http')) return false;
+  return isLocalHost() || isHostedAdmin();
+}
+
 function getServerUrl() {
-  if (isHostedAdmin()) return window.location.origin;
+  if (isServedByBot()) return window.location.origin;
   return document.getElementById('inp-url').value.trim().replace(/\/$/, '');
 }
 
@@ -837,13 +846,15 @@ function getSavedKey() {
 async function init() {
   const savedUrl = localStorage.getItem('pp_url') || '';
   const savedKey = getSavedKey();
+  const served = isServedByBot();
   const hosted = isHostedAdmin();
 
-  if (hosted) {
+  if (served) {
     document.getElementById('inp-url').value = window.location.origin;
     document.getElementById('url-field').style.display = 'none';
-    document.getElementById('login-subtitle').textContent =
-      'You are on your live admin site. Enter your API key to continue.';
+    document.getElementById('login-subtitle').textContent = hosted
+      ? 'You are on your live admin site. Enter your API key to continue.'
+      : 'Local bot is running. Enter your ADMIN_API_KEY from .env (same value as on Render/Railway).';
   } else {
     document.getElementById('inp-url').value = savedUrl || '';
   }
@@ -858,11 +869,15 @@ async function init() {
     if (e.key === 'Enter') modalConfirm();
     if (e.key === 'Escape') modalCancel();
   });
+  document.getElementById('modal-cancel-btn').addEventListener('click', modalCancel);
+  document.getElementById('modal-confirm').addEventListener('click', modalConfirm);
+  document.querySelector('#modal-overlay .modal-box').addEventListener('click', e => e.stopPropagation());
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('modal-overlay')) modalCancel();
   });
+  setupDelegatedActions();
 
-  if (savedKey && (hosted || savedUrl)) {
+  if (savedKey && (served || savedUrl)) {
     await doLogin(true);
   }
 }
@@ -875,7 +890,11 @@ async function doLogin(auto = false) {
   const key = document.getElementById('inp-key').value.trim();
   if (!auto) err.textContent = '';
   if (!url || !key) {
-    if (!auto) err.textContent = 'Please enter server URL and Admin API Key.';
+    if (!auto) {
+      err.textContent = isServedByBot()
+        ? 'Please enter your Admin API Key.'
+        : 'Please enter server URL and Admin API Key.';
+    }
     return;
   }
   if (url.startsWith('file:')) {
@@ -890,7 +909,7 @@ async function doLogin(auto = false) {
   try {
     const r = await fetch(`${url}/api/stats`, { headers: { 'X-API-Key': key } });
     if (r.status === 401) {
-      if (!auto) err.textContent = 'Wrong API key — must match ADMIN_API_KEY in Railway/Render (same as your .env).';
+      err.textContent = 'Wrong API key — must match ADMIN_API_KEY in your .env file (and the same variable on Render/Railway if deployed).';
       return;
     }
     if (r.status === 502 || r.status === 503) {
@@ -946,16 +965,61 @@ function go(section) {
 
 // ── API helper ───────────────────────────────────────────
 async function api(path, opts = {}) {
-  const r = await fetch(BASE + path, {
-    ...opts,
-    headers: {
-      'X-API-Key': KEY,
-      'Content-Type': 'application/json',
-      ...(opts.headers || {})
-    }
-  });
-  if (r.status === 401) { doLogout(); return null; }
-  return r.json();
+  try {
+    const r = await fetch(BASE + path, {
+      ...opts,
+      headers: {
+        'X-API-Key': KEY,
+        'Content-Type': 'application/json',
+        ...(opts.headers || {})
+      }
+    });
+    if (r.status === 401) { doLogout(); return null; }
+    let data = {};
+    try { data = await r.json(); } catch { /* empty body */ }
+    if (!r.ok) return { success: false, error: data.error || `Request failed (${r.status})` };
+    return data;
+  } catch {
+    return { success: false, error: 'Cannot reach bot server — run START-BOT.ps1' };
+  }
+}
+
+// ── Delegated clicks (avoids broken inline onclick with quoted names) ──
+function setupDelegatedActions() {
+  document.getElementById('users-wrap').addEventListener('click', onUsersWrapClick);
+  document.getElementById('codes-wrap').addEventListener('click', onCodesWrapClick);
+  document.getElementById('gen-output').addEventListener('click', onGenOutputClick);
+}
+
+function onUsersWrapClick(e) {
+  const banBtn = e.target.closest('[data-action="ban"]');
+  if (banBtn) {
+    banUser(banBtn.dataset.userId, banBtn.dataset.userName || 'User');
+    return;
+  }
+  const unbanBtn = e.target.closest('[data-action="unban"]');
+  if (unbanBtn) {
+    unbanUser(unbanBtn.dataset.userId, unbanBtn.dataset.userName || 'User');
+    return;
+  }
+  const copyEl = e.target.closest('[data-action="copy"]');
+  if (copyEl && copyEl.dataset.text) copy(copyEl.dataset.text);
+}
+
+function onCodesWrapClick(e) {
+  const delBtn = e.target.closest('[data-action="delete-code"]');
+  if (delBtn) deleteCode(delBtn.dataset.code);
+  const copyEl = e.target.closest('[data-action="copy"]');
+  if (copyEl && copyEl.dataset.text) copy(copyEl.dataset.text);
+}
+
+function onGenOutputClick(e) {
+  const chip = e.target.closest('[data-action="copy-chip"]');
+  if (chip) copyChip(chip.dataset.code);
+  const allBtn = e.target.closest('[data-action="copy-all"]');
+  if (allBtn && allBtn.dataset.codes) {
+    copyAll(allBtn.dataset.codes.split('\n'));
+  }
 }
 
 // ── Dashboard ────────────────────────────────────────────
@@ -1040,7 +1104,7 @@ async function loadCodes() {
     return `
       <div class="item-card">
         <div class="item-card-top">
-          <span class="code-tag" onclick="copy('${c.code}')" title="Tap to copy">${c.code}</span>
+          <span class="code-tag" data-action="copy" data-text="${esc(c.code)}" title="Tap to copy">${c.code}</span>
           ${status}
         </div>
         <div class="item-card-rows">
@@ -1049,7 +1113,7 @@ async function loadCodes() {
           <div class="item-card-row"><span class="label">Created</span><span class="value">${fmtShort(c.createdAt)}</span></div>
           <div class="item-card-row"><span class="label">Used</span><span class="value">${c.usedAt ? fmtShort(c.usedAt) : '—'}</span></div>
         </div>
-        ${!c.usedBy ? `<div class="item-card-actions"><button class="btn btn-danger btn-sm" onclick="deleteCode('${c.code}')">Delete code</button></div>` : ''}
+        ${!c.usedBy ? `<div class="item-card-actions"><button type="button" class="btn btn-danger btn-sm" data-action="delete-code" data-code="${esc(c.code)}">Delete code</button></div>` : ''}
       </div>`;
   }).join('')}</div>`;
 }
@@ -1061,18 +1125,21 @@ async function generateCodes() {
     method: 'POST',
     body: JSON.stringify({ count, note })
   });
-  if (!d) return;
+  if (!d?.codes) {
+    toast(d?.error || 'Could not generate codes', 'error');
+    return;
+  }
 
   const out = document.getElementById('gen-output');
   out.innerHTML = `
     <div class="gen-grid" id="gen-chips">
       ${d.codes.map(code => `
-        <div class="gen-chip" id="chip-${code}" onclick="copyChip('${code}')">
+        <div class="gen-chip" id="chip-${code}" data-action="copy-chip" data-code="${esc(code)}">
           <span>📋</span>${code}
         </div>
       `).join('')}
     </div>
-    ${d.codes.length > 1 ? `<button class="btn btn-ghost btn-sm copy-all-btn" onclick="copyAll(${JSON.stringify(d.codes)})">Copy All</button>` : ''}
+    ${d.codes.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm copy-all-btn" data-action="copy-all" data-codes="${esc(d.codes.join('\n'))}">Copy All</button>` : ''}
   `;
   toast(`Generated ${d.codes.length} code${d.codes.length > 1 ? 's' : ''}`, 'success');
   loadCodes();
@@ -1080,8 +1147,8 @@ async function generateCodes() {
 
 async function deleteCode(code) {
   if (!confirm(`Delete unused code ${code}?\nThis cannot be undone.`)) return;
-  const d = await api('/api/codes/' + code, { method: 'DELETE' });
-  if (d && d.success) { toast('Code deleted', 'success'); loadCodes(); }
+  const d = await api('/api/codes/' + encodeURIComponent(code), { method: 'DELETE' });
+  if (d?.success) { toast('Code deleted', 'success'); loadCodes(); }
   else toast(d?.error || 'Error deleting code', 'error');
 }
 
@@ -1108,12 +1175,11 @@ async function loadUsers() {
         ? '<span class="badge badge-success">✓ Active</span>'
         : '<span class="badge badge-warning">⏳ Pending</span>';
     const codeCell = u.activationCode
-      ? `<span class="code-tag" onclick="copy('${u.activationCode}')">${u.activationCode}</span>`
+      ? `<span class="code-tag" data-action="copy" data-text="${esc(u.activationCode)}">${u.activationCode}</span>`
       : '—';
-    const nameArg = JSON.stringify(name);
     const actionBtn = u.banned
-      ? `<button class="btn btn-success btn-sm" onclick="unbanUser('${u.chatId}', ${nameArg})">Unblock user</button>`
-      : `<button class="btn btn-danger btn-sm" onclick="banUser('${u.chatId}', ${nameArg})">Block user</button>`;
+      ? `<button type="button" class="btn btn-success btn-sm" data-action="unban" data-user-id="${esc(u.chatId)}" data-user-name="${esc(name)}">Unblock user</button>`
+      : `<button type="button" class="btn btn-danger btn-sm" data-action="ban" data-user-id="${esc(u.chatId)}" data-user-name="${esc(name)}">Block user</button>`;
     return `
       <div class="item-card">
         <div class="item-card-top">
@@ -1140,12 +1206,17 @@ function showModal(title, body) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').textContent = body;
   document.getElementById('modal-input').value = '';
+  document.getElementById('modal-confirm').disabled = false;
+  document.getElementById('modal-confirm').textContent = 'Block user';
   document.getElementById('modal-overlay').classList.add('show');
-  document.getElementById('modal-input').focus();
+  if (!window.matchMedia('(pointer: coarse)').matches) {
+    document.getElementById('modal-input').focus();
+  }
   return new Promise(resolve => { _modalResolve = resolve; });
 }
 
 function modalConfirm() {
+  if (document.getElementById('modal-confirm').disabled) return;
   const val = document.getElementById('modal-input').value.trim() || 'Blocked by admin';
   document.getElementById('modal-overlay').classList.remove('show');
   if (_modalResolve) { _modalResolve(val); _modalResolve = null; }
@@ -1159,16 +1230,16 @@ function modalCancel() {
 async function banUser(id, name) {
   const reason = await showModal(`Block ${name}?`, 'Enter a reason, or leave blank to use the default.');
   if (reason === null) return;
-  const d = await api(`/api/users/${id}/ban`, { method: 'POST', body: JSON.stringify({ reason }) });
-  if (d && d.success) { toast(`${name} has been blocked`, 'success'); loadUsers(); loadStats(); }
-  else toast(d?.error || 'Error', 'error');
+  const d = await api(`/api/users/${encodeURIComponent(id)}/ban`, { method: 'POST', body: JSON.stringify({ reason }) });
+  if (d?.success) { toast(`${name} has been blocked`, 'success'); loadUsers(); loadStats(); }
+  else toast(d?.error || 'Could not block user', 'error');
 }
 
 async function unbanUser(id, name) {
   if (!confirm(`Unblock ${name}?`)) return;
-  const d = await api(`/api/users/${id}/unban`, { method: 'POST' });
-  if (d && d.success) { toast(`${name} has been unblocked`, 'success'); loadUsers(); loadStats(); }
-  else toast(d?.error || 'Error', 'error');
+  const d = await api(`/api/users/${encodeURIComponent(id)}/unban`, { method: 'POST' });
+  if (d?.success) { toast(`${name} has been unblocked`, 'success'); loadUsers(); loadStats(); }
+  else toast(d?.error || 'Could not unblock user', 'error');
 }
 
 // ── Helpers ──────────────────────────────────────────────
