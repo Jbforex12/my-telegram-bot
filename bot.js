@@ -373,6 +373,14 @@ function isNumberedHeadingLine(line) {
   return true;
 }
 
+/** Section titles only — used for bold + spacing (not Tip/Example labels) */
+function isSectionHeadingLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/^#{1,6}\s+/.test(trimmed)) return true;
+  return isNumberedHeadingLine(line);
+}
+
 function formatLineForTelegramHtml(line) {
   const trimmed = line.trim();
   if (!trimmed) return "";
@@ -396,7 +404,15 @@ function formatLineForTelegramHtml(line) {
 }
 
 function toTelegramHtml(plain) {
-  return plain.split("\n").map(formatLineForTelegramHtml).join("\n");
+  const lines = plain.split("\n");
+  const out = [];
+  for (const line of lines) {
+    if (isSectionHeadingLine(line) && out.length > 0 && out[out.length - 1] !== "") {
+      out.push("");
+    }
+    out.push(formatLineForTelegramHtml(line));
+  }
+  return out.join("\n");
 }
 
 function formatReply(text) {
