@@ -381,15 +381,41 @@ function isSectionHeadingLine(line) {
   return isNumberedHeadingLine(line);
 }
 
+/** Sans-serif bold Unicode — Telegram has no font-size; this reads slightly larger than body text */
+function toHeadingDisplayText(text) {
+  const SANS_BOLD_A = 0x1d5d4;
+  const SANS_BOLD_a = 0x1d5ee;
+  const SANS_BOLD_0 = 0x1d7ec;
+  return String(text).replace(/[A-Za-z0-9]/g, (ch) => {
+    const c = ch.charCodeAt(0);
+    if (c >= 65 && c <= 90) return String.fromCodePoint(SANS_BOLD_A + (c - 65));
+    if (c >= 97 && c <= 122) return String.fromCodePoint(SANS_BOLD_a + (c - 97));
+    if (c >= 48 && c <= 57) return String.fromCodePoint(SANS_BOLD_0 + (c - 48));
+    return ch;
+  });
+}
+
+function formatSectionHeadingHtml(trimmed) {
+  const hash = trimmed.match(/^#{1,6}\s+(.+)$/);
+  if (hash) return escapeTelegramHtml(toHeadingDisplayText(hash[1].trim()));
+
+  const numbered = trimmed.match(/^(\d+\.\s+)(.+)$/);
+  if (numbered) {
+    return (
+      escapeTelegramHtml(numbered[1]) +
+      escapeTelegramHtml(toHeadingDisplayText(numbered[2].trim()))
+    );
+  }
+
+  return escapeTelegramHtml(toHeadingDisplayText(trimmed));
+}
+
 function formatLineForTelegramHtml(line) {
   const trimmed = line.trim();
   if (!trimmed) return "";
 
-  const hash = trimmed.match(/^#{1,6}\s+(.+)$/);
-  if (hash) return `<b>${escapeTelegramHtml(hash[1].trim())}</b>`;
-
-  if (isNumberedHeadingLine(line)) {
-    return `<b>${escapeTelegramHtml(trimmed)}</b>`;
+  if (/^#{1,6}\s+/.test(trimmed) || isNumberedHeadingLine(line)) {
+    return formatSectionHeadingHtml(trimmed);
   }
 
   const label = trimmed.match(
@@ -535,11 +561,30 @@ const token = env("TELEGRAM_BOT_TOKEN");
 let bot;
 let groq;
 
-function initTelegramBot() {
+let polling409Retries = 0;
+let polling409Retrying = false;
+
+async function initTelegramBot() {
   if (!logEnvStatus()) return;
-  console.log("Starting Telegram polling…");
-  bot = new TelegramBot(token, { polling: true });
+  bot = new TelegramBot(token, { polling: false });
   groq = new Groq({ apiKey: env("GROQ_API_KEY") });
+  try {
+    await bot.deleteWebHook({ drop_pending_updates: false });
+  } catch (err) {
+    console.error("deleteWebHook warning:", err.message);
+  }
+  const isCloud = !!(
+    process.env.RENDER ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_PUBLIC_DOMAIN
+  );
+  if (isCloud) {
+    console.log("Cloud deploy: waiting 12s before polling (previous instance must release Telegram)…");
+    await new Promise((r) => setTimeout(r, 12000));
+  }
+  console.log("Starting Telegram polling…");
+  await bot.startPolling({ restart: false });
   botReady = true;
 
 const conversations = {};
@@ -1658,10 +1703,30 @@ bot.on("polling_error", (err) => {
       last409HintAt = now;
       console.error(
         "\n⚠️  Another bot instance is using this Telegram token.\n" +
-        "   • Stop extra local copies: run STOP-BOT.ps1 (or close all terminals running npm start)\n" +
-        "   • If Render/Railway is live: suspend it before running locally, or keep cloud only\n" +
-        "   • Rule: exactly ONE running bot (local OR cloud, never both)\n"
+        "   • Stop Railway if it still exists (Render + Railway = 409 every time)\n" +
+        "   • Stop local bot: run STOP-BOT.ps1 — never run local + Render together\n" +
+        "   • Render: only ONE web service for this bot; suspend duplicates\n" +
+        "   • Rule: exactly ONE host polling Telegram (Render OR local, not both)\n"
       );
+    }
+    if (!polling409Retrying && polling409Retries < 6) {
+      polling409Retrying = true;
+      polling409Retries += 1;
+      const waitSec = Math.min(10 + polling409Retries * 5, 45);
+      console.error(`   Retrying polling in ${waitSec}s (attempt ${polling409Retries}/6)…`);
+      setTimeout(async () => {
+        try {
+          await bot.stopPolling();
+          await bot.deleteWebHook({ drop_pending_updates: false });
+          await new Promise((r) => setTimeout(r, waitSec * 1000));
+          await bot.startPolling({ restart: false });
+          console.log("Polling restarted after 409 — check if errors stopped.");
+        } catch (e) {
+          console.error("Polling restart failed:", e.message);
+        } finally {
+          polling409Retrying = false;
+        }
+      }, 0);
     }
   }
 });
@@ -1866,8 +1931,13 @@ server.listen(PORT, HOST, () => {
   console.log(`✅ Admin panel: http://localhost:${PORT}/admin`);
   if (PUBLIC_URL) console.log(`✅ Public admin: ${PUBLIC_URL}/admin`);
   console.log(`📁 Data folder: ${DATA_DIR} (${codeCount} codes, ${userCount} users loaded)`);
-  initTelegramBot();
-  if (botReady) console.log(`✅ Pathway Prep Bot is running!`);
+  initTelegramBot()
+    .then(() => {
+      if (botReady) console.log(`✅ Pathway Prep Bot is running!`);
+    })
+    .catch((err) => {
+      console.error("Telegram init failed:", err.message || err);
+    });
 
   if (PUBLIC_URL) {
     setInterval(() => {
