@@ -1772,10 +1772,24 @@ const server = http.createServer(async (req, res) => {
       description: "Manage activation codes and users",
       start_url: "/admin",
       display: "standalone",
-      background_color: "#0c1220",
-      theme_color: "#2563eb",
+      background_color: "#ffffff",
+      theme_color: "#1e40af",
       orientation: "portrait"
     });
+  }
+
+  if (req.method === "GET" && (p === "/logo.png" || p === "/logo.svg")) {
+    const logoFile = p === "/logo.svg" ? "logo.svg" : "logo.png";
+    const logoPath = path.join(__dirname, logoFile);
+    try {
+      const data = fs.readFileSync(logoPath);
+      const type = logoFile.endsWith(".svg") ? "image/svg+xml" : "image/png";
+      res.writeHead(200, { "Content-Type": type, "Cache-Control": "public, max-age=86400" });
+      return res.end(data);
+    } catch (e) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      return res.end("Logo not found.");
+    }
   }
 
   if (req.method === "GET" && (p === "/" || p === "/admin")) {

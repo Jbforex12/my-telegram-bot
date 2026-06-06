@@ -3,30 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#1e40af">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PP Admin">
 <link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/logo.png" type="image/png">
 <title>Pathway Prep — Admin</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0c1220;
-  --surface: #111b2e;
-  --surface2: #1a2740;
-  --border: #243352;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-light: #3b82f6;
-  --accent-soft: rgba(37, 99, 235, 0.14);
-  --accent-muted: rgba(37, 99, 235, 0.08);
-  --success: #22c55e;
-  --danger: #ef4444;
-  --warning: #f59e0b;
-  --text: #e8eef7;
-  --text-muted: #8ba3c7;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface2: #f4f6fa;
+  --border: #e2e8f0;
+  --accent: #1e40af;
+  --accent-hover: #1e3a8a;
+  --accent-light: #2563eb;
+  --accent-soft: rgba(30, 64, 175, 0.1);
+  --accent-muted: rgba(30, 64, 175, 0.06);
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --text: #0b1220;
+  --text-muted: #51607a;
   --radius: 10px;
+  --shadow-sm: 0 1px 2px rgba(11, 18, 32, 0.05);
+  --shadow-md: 0 4px 16px rgba(11, 18, 32, 0.06);
 }
 
 html {
@@ -44,27 +47,159 @@ body {
   overflow-x: hidden;
 }
 
-/* Login */
-#login {
+/* Brand logo */
+.brand-mark {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+}
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.34);
+  transform-origin: center;
+}
+.brand-logo {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
+}
+.brand-logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+.brand-logo-text strong {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.brand-logo-text span {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* Login */
+#login {
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 20px;
+  background: var(--bg);
+}
+.login-shell {
+  max-width: 1024px;
+  margin: 0 auto;
+}
+.login-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0;
+}
+.login-header a {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.login-header a:hover { color: var(--text); }
+.login-grid {
+  display: grid;
+  gap: 48px;
+  padding-bottom: 64px;
+}
+.login-hero {
+  display: none;
+  flex-direction: column;
+  border-top: 2px solid var(--accent);
+  padding-top: 32px;
+}
+.login-hero .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.login-hero h1 {
+  margin-top: 16px;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+.login-hero h1 em {
+  font-style: normal;
+  color: var(--accent);
+}
+.login-hero .lead {
+  margin-top: 20px;
+  max-width: 28rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.login-hero ul {
+  margin-top: 32px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-hero li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.login-hero li::before {
+  content: "✓";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
 }
 .login-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-top: 3px solid var(--accent);
   border-radius: 16px;
-  padding: 40px;
+  padding: 32px;
   width: 100%;
-  max-width: 420px;
-  box-shadow: 0 8px 32px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-sm);
 }
-.login-logo { font-size: 32px; margin-bottom: 12px; }
-.login-card h1 { font-size: 22px; margin-bottom: 4px; }
-.login-card .subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: 13px; }
+.login-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.login-card h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.login-card .subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: 13px; line-height: 1.5; }
 
 label {
   display: block;
@@ -81,17 +216,20 @@ input[type="number"],
 textarea,
 select {
   width: 100%;
-  background: var(--surface2);
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 10px 14px;
   border-radius: var(--radius);
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
   margin-bottom: 16px;
 }
-input:focus, textarea:focus { border-color: var(--accent); }
+input:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
 input[type="number"] { -moz-appearance: textfield; }
 
 .btn {
@@ -115,8 +253,8 @@ input[type="number"] { -moz-appearance: textfield; }
 .btn-danger:hover:not(:disabled) { opacity: 0.85; }
 .btn-success { background: var(--success); color: #fff; }
 .btn-success:hover:not(:disabled) { opacity: 0.85; }
-.btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-.btn-ghost:hover:not(:disabled) { background: var(--border); }
+.btn-ghost { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface2); }
 .btn-sm { padding: 6px 12px; font-size: 12px; }
 .btn-full { width: 100%; }
 
@@ -141,21 +279,19 @@ input[type="number"] { -moz-appearance: textfield; }
 
 /* Sidebar */
 .sidebar {
-  width: 220px;
+  width: 240px;
   flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 .sidebar-logo {
   padding: 20px;
   border-bottom: 1px solid var(--border);
 }
-.sidebar-logo .logo-icon { font-size: 24px; }
-.sidebar-logo h2 { font-size: 15px; font-weight: 700; margin-top: 6px; }
-.sidebar-logo span { font-size: 11px; color: var(--text-muted); }
 
 .nav { padding: 12px 0; flex: 1; }
 .nav-item {
@@ -172,7 +308,7 @@ input[type="number"] { -moz-appearance: textfield; }
   user-select: none;
 }
 .nav-item:hover { color: var(--text); background: var(--surface2); }
-.nav-item.active { color: var(--accent-light); background: var(--accent-muted); border-right-color: var(--accent); }
+.nav-item.active { color: var(--accent); background: var(--accent-muted); border-right-color: var(--accent); font-weight: 600; }
 .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
 
 .sidebar-footer {
@@ -191,9 +327,6 @@ input[type="number"] { -moz-appearance: textfield; }
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.mobile-header .logo-icon { font-size: 22px; }
-.mobile-header h2 { font-size: 16px; font-weight: 700; }
-.mobile-header span { font-size: 11px; color: var(--text-muted); display: block; }
 
 /* Main */
 .main {
@@ -201,7 +334,7 @@ input[type="number"] { -moz-appearance: textfield; }
   overflow-y: auto;
   overflow-x: hidden;
   padding: 28px;
-  background: var(--bg);
+  background: #f8fafc;
   width: 100%;
   -webkit-overflow-scrolling: touch;
 }
@@ -210,8 +343,8 @@ input[type="number"] { -moz-appearance: textfield; }
 .section.active { display: block; }
 
 .page-header { margin-bottom: 24px; }
-.page-header h1 { font-size: 22px; font-weight: 700; }
-.page-header p { color: var(--text-muted); margin-top: 4px; font-size: 13px; }
+.page-header h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.page-header p { color: var(--text-muted); margin-top: 6px; font-size: 14px; }
 
 /* Stats */
 .stats-grid {
@@ -223,8 +356,9 @@ input[type="number"] { -moz-appearance: textfield; }
 .stat-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   padding: 20px;
+  box-shadow: var(--shadow-sm);
 }
 .stat-label {
   font-size: 11px;
@@ -244,9 +378,10 @@ input[type="number"] { -moz-appearance: textfield; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   overflow: hidden;
   margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
 }
 .card-header {
   padding: 14px 20px;
@@ -254,7 +389,7 @@ input[type="number"] { -moz-appearance: textfield; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--surface2);
+  background: var(--bg);
 }
 .card-header h3 { font-size: 14px; font-weight: 700; }
 
@@ -262,9 +397,10 @@ input[type="number"] { -moz-appearance: textfield; }
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   padding: 20px;
   margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
 }
 .panel h3 { font-size: 14px; font-weight: 700; margin-bottom: 16px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 
@@ -284,10 +420,11 @@ input[type="number"] { -moz-appearance: textfield; }
 .list-wrap { padding: 12px; }
 .item-cards { display: flex; flex-direction: column; gap: 12px; }
 .item-card {
-  background: var(--surface2);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 14px;
+  box-shadow: var(--shadow-sm);
 }
 .item-card-top {
   display: flex;
@@ -357,9 +494,9 @@ input[type="number"] { -moz-appearance: textfield; }
   font-weight: 700;
   white-space: nowrap;
 }
-.badge-success { background: rgba(34,197,94,0.15); color: var(--success); }
-.badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
-.badge-danger  { background: rgba(239,68,68,0.15);  color: var(--danger); }
+.badge-success { background: rgba(22,163,74,0.12); color: var(--success); }
+.badge-warning { background: rgba(217,119,6,0.12); color: var(--warning); }
+.badge-danger  { background: rgba(220,38,38,0.12);  color: var(--danger); }
 .badge-muted   { background: var(--surface2); color: var(--text-muted); }
 
 /* Code tag */
@@ -430,6 +567,7 @@ input[type="number"] { -moz-appearance: textfield; }
   transition: all 0.25s ease;
   max-width: 340px;
   pointer-events: none;
+  box-shadow: var(--shadow-md);
 }
 #toast.show { transform: translateY(0); opacity: 1; }
 #toast.t-success { border-color: var(--success); color: var(--success); }
@@ -440,7 +578,7 @@ input[type="number"] { -moz-appearance: textfield; }
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(11, 18, 32, 0.45);
   z-index: 1000;
   align-items: center;
   justify-content: center;
@@ -454,7 +592,7 @@ input[type="number"] { -moz-appearance: textfield; }
   padding: 24px;
   width: 100%;
   max-width: 380px;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  box-shadow: var(--shadow-md);
   position: relative;
   z-index: 10001;
 }
@@ -490,6 +628,16 @@ input[type="number"] { -moz-appearance: textfield; }
   .mobile-header { display: none !important; }
   .mobile-nav { display: none !important; }
   .main { padding-bottom: 28px; }
+}
+
+@media (min-width: 1024px) {
+  .login-grid {
+    grid-template-columns: 1.1fr 1fr;
+    align-items: center;
+    gap: 64px;
+    padding-top: 40px;
+  }
+  .login-hero { display: flex; }
 }
 
 /* Mobile & tablet */
@@ -567,12 +715,13 @@ input[type="number"] { -moz-appearance: textfield; }
     right: 0;
     bottom: 0;
     z-index: 200;
-    background: var(--surface);
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(8px);
     border-top: 1px solid var(--border);
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
     justify-content: space-around;
     gap: 2px;
-    box-shadow: 0 -4px 24px rgba(0,0,0,0.35);
+    box-shadow: 0 -4px 24px rgba(11, 18, 32, 0.08);
   }
   .mobile-nav button {
     flex: 1;
@@ -593,7 +742,7 @@ input[type="number"] { -moz-appearance: textfield; }
     -webkit-tap-highlight-color: transparent;
   }
   .mobile-nav button.active {
-    color: var(--accent-light);
+    color: var(--accent);
     background: var(--accent-soft);
   }
   .mobile-nav button span:first-child { font-size: 22px; line-height: 1; }
@@ -604,30 +753,58 @@ input[type="number"] { -moz-appearance: textfield; }
 
 <!-- ── Login ──────────────────────────────────────────── -->
 <div id="login">
-  <div class="login-card">
-    <div class="login-logo">🎓</div>
-    <h1>Pathway Prep Admin</h1>
-    <p class="subtitle" id="login-subtitle">Sign in to manage codes and users from any device</p>
+  <div class="login-shell">
+    <header class="login-header">
+      <div class="brand-logo" aria-label="Pathway Prep">
+        <span class="brand-mark"><img src="/logo.png" alt="" /></span>
+        <div class="brand-logo-text">
+          <strong>Pathway Prep</strong>
+          <span>Bot Admin</span>
+        </div>
+      </div>
+      <a href="https://partners.pathwayprep.online/admin/" target="_blank" rel="noopener">Partner admin</a>
+    </header>
 
-    <div id="url-field">
-      <label>Server URL</label>
-      <input type="text" id="inp-url" placeholder="https://your-app.onrender.com" />
-      <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px">Use one live URL (Render recommended). Open <strong>/admin</strong> on that host — not Netlify, not a file from Downloads.</p>
+    <div class="login-grid">
+      <section class="login-hero">
+        <p class="eyebrow">Pathway Prep Operations</p>
+        <h1>Manage your bot with <em>clarity.</em></h1>
+        <p class="lead">Generate activation codes, monitor learners, and control access — the internal console for your Telegram bot.</p>
+        <ul>
+          <li>View registered users and ban status</li>
+          <li>Generate and track single-use access codes</li>
+          <li>Backup and restore bot data before deploys</li>
+        </ul>
+      </section>
+
+      <section class="login-card-wrap">
+        <div class="login-card">
+          <div class="login-badge">Staff only</div>
+          <h2>Sign in</h2>
+          <p class="subtitle" id="login-subtitle">Sign in to manage codes and users from any device</p>
+
+          <div id="url-field">
+            <label>Server URL</label>
+            <input type="text" id="inp-url" placeholder="https://your-app.onrender.com" />
+            <p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px;line-height:1.5">Use one live URL (Render recommended). Open <strong>/admin</strong> on that host — not Netlify, not a file from Downloads.</p>
+          </div>
+
+          <label>Admin API Key</label>
+          <input type="password" id="inp-key" placeholder="Your ADMIN_API_KEY" autocomplete="current-password" />
+
+          <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;font-weight:500;color:var(--text);margin-bottom:16px">
+            <input type="checkbox" id="remember-device" checked style="width:auto;margin:0" />
+            Remember on this device
+          </label>
+
+          <div id="login-err" class="error-msg"></div>
+
+          <button class="btn btn-primary btn-full" id="login-btn" onclick="doLogin()" style="margin-top:4px;min-height:44px">
+            Sign in
+          </button>
+        </div>
+      </section>
     </div>
-
-    <label>Admin API Key</label>
-    <input type="password" id="inp-key" placeholder="Your ADMIN_API_KEY" autocomplete="current-password" />
-
-    <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;font-weight:500;color:var(--text);margin-bottom:16px">
-      <input type="checkbox" id="remember-device" checked style="width:auto;margin:0" />
-      Remember on this device
-    </label>
-
-    <div id="login-err" class="error-msg"></div>
-
-    <button class="btn btn-primary btn-full" id="login-btn" onclick="doLogin()" style="margin-top:4px">
-      Connect
-    </button>
   </div>
 </div>
 
@@ -636,19 +813,25 @@ input[type="number"] { -moz-appearance: textfield; }
   <div class="layout">
 
     <header class="mobile-header">
-      <div class="logo-icon">🎓</div>
-      <div>
-        <h2>Pathway Prep</h2>
-        <span>Admin</span>
+      <div class="brand-logo">
+        <span class="brand-mark"><img src="/logo.png" alt="" /></span>
+        <div class="brand-logo-text">
+          <strong>Pathway Prep</strong>
+          <span>Bot Admin</span>
+        </div>
       </div>
     </header>
 
     <!-- Sidebar -->
     <nav class="sidebar">
       <div class="sidebar-logo">
-        <div class="logo-icon">🎓</div>
-        <h2>Pathway Prep</h2>
-        <span>Admin</span>
+        <div class="brand-logo">
+          <span class="brand-mark"><img src="/logo.png" alt="" /></span>
+          <div class="brand-logo-text">
+            <strong>Pathway Prep</strong>
+            <span>Bot Admin</span>
+          </div>
+        </div>
       </div>
       <div class="nav">
         <div class="nav-item active" id="nav-dashboard" onclick="go('dashboard')">
